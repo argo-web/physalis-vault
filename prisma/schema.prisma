@@ -1,0 +1,561 @@
+// Schéma "tenant" — pas de multiSchema, queries Prisma émises non-qualifiées
+// (`SELECT * FROM "User"`) pour permettre le routing par `search_path` en
+// Phase 3 (schema-per-tenant `client_<slug>`).
+//
+// Ce fichier est une COPIE des modèles tenant de prisma/schema.prisma sans
+// les annotations @@schema. Il ne sert QU'à la codegen du client tenant
+// (utilisé par défaut dans lib/prisma.ts → `import { prisma }`).
+//
+// Source de vérité pour les migrations DB : prisma/schema.prisma. Quand
+// un modèle tenant change, mettre à jour les DEUX fichiers en parallèle.
+// Les modèles admin (Client, Subscription, AuditLog) ne sont PAS dans ce
+// fichier — ils restent dans prisma/schema.prisma + multiSchema.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String            @id @default(cuid())
+  email                String            @unique
+  password             String
+  role                 Role              @default(MEMBER)
+  /// 2FA TOTP — secret chiffré avec la même ENCRYPTION_KEY que les Secrets
+  /// (3 colonnes : encryptedValue/iv/tag, base64). Désactivé par défaut.
+  twoFactorEnabled     Boolean           @default(false)
+  twoFactorSecret      String?
+  twoFactorIv          String?
+  twoFactorTag         String?
+  /// 8 codes de secours bcrypt-hashés. Vidé à chaque rotation 2FA.
+  backupCodes          String[]          @default([])
+  projects             ProjectMember[]
+  organizations        OrgMember[]
+  invitationsSent      Invitation[]      @relation("invitedBy")
+  invitationsReceived  Invitation[]      @relation("invitationsReceived")
+  createdMachineTokens MachineToken[]    @relation("machineTokenCreator")
+  pluginTokens         PluginToken[]
+  vaultEntries         VaultEntry[]
+  teamVaultMemberships TeamVaultMember[]
+  oneTimeShares        OneTimeShare[]    @relation("oneTimeShareCreator")
+  accessLogs           AccessLog[]       @relation("accessLogActor")
+  secretRequests       SecretRequest[]   @relation("secretRequestCreator")
+  createdAt            DateTime          @default(now())
+}
+
+model PluginToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  userAgent  String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Organization {
+  id                   String                @id @default(cuid())
+  name                 String
+  slug                 String                @unique
+  members              OrgMember[]
+  projects             Project[]
+  invitations          Invitation[]
+  secrets              OrgSecret[]
+  servers              Server[]
+  teamVaultCollections TeamVaultCollection[]
+  oneTimeShares        OneTimeShare[]
+  accessLogs           AccessLog[]
+  secretRequests       SecretRequest[]
+  createdAt            DateTime              @default(now())
+}
+
+model Server {
+  id             String        @id @default(cuid())
+  name           String
+  ip             String
+  sshUser        String
+  encryptedKey   String
+  iv             String
+  tag            String
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  environments   Environment[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model OrgSecret {
+  id             String       @id @default(cuid())
+  key            String
+  encryptedValue String
+  iv             String
+  tag            String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, key])
+}
+
+model OrgMember {
+  id             String       @id @default(cuid())
+  userId         String
+  organizationId String
+  role           OrgRole      @default(MEMBER)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+}
+
+model Invitation {
+  id             String    @id @default(cuid())
+  email          String
+  organizationId String
+  role           OrgRole   @default(MEMBER)
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  invitedById    String
+  inviteeUserId  String?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("invitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+  inviteeUser  User?        @relation("invitationsReceived", fields: [inviteeUserId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([inviteeUserId])
+}
+
+model Project {
+  id                   String                @id @default(cuid())
+  name                 String
+  slug                 String                @unique
+  organizationId       String
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members              ProjectMember[]
+  environments         Environment[]
+  tokens               MachineToken[]
+  accessLogs           AccessLog[]
+  services             Service[]
+  appAccounts          AppAccount[]
+  policies             Policy[]
+  teamVaultCollections TeamVaultCollection[]
+  secretRequests       SecretRequest[]
+  githubRepo           String?
+  githubWorkflow       String?
+  createdAt            DateTime              @default(now())
+
+  @@index([organizationId])
+}
+
+model Policy {
+  id            String      @id @default(cuid())
+  repo          String
+  workflow      String
+  branch        String
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([repo, workflow, branch, projectId, environmentId])
+  @@index([repo, workflow, branch])
+  @@index([projectId])
+  @@index([environmentId])
+}
+
+model Service {
+  id            String   @id @default(cuid())
+  name          String
+  url           String?
+  encryptedData String
+  iv            String
+  tag           String
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model AppAccount {
+  id            String   @id @default(cuid())
+  name          String
+  encryptedData String
+  iv            String
+  tag           String
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model Environment {
+  id            String         @id @default(cuid())
+  name          String
+  projectId     String
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  url           String?
+  dockerCompose String?
+  serverId      String?
+  server        Server?        @relation(fields: [serverId], references: [id], onDelete: SetNull)
+  deployPath    String?
+  secrets       Secret[]
+  tokens        MachineToken[]
+  policies      Policy[]
+
+  @@unique([projectId, name])
+  @@index([serverId])
+}
+
+model Secret {
+  id             String      @id @default(cuid())
+  key            String
+  encryptedValue String
+  iv             String
+  tag            String
+  category       String?
+  environmentId  String
+  environment    Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([environmentId, key])
+}
+
+model MachineToken {
+  id            String      @id @default(cuid())
+  name          String
+  tokenHash     String      @unique
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  createdById   String?
+  createdBy     User?       @relation("machineTokenCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lastUsedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  revokedAt     DateTime?
+}
+
+model ProjectMember {
+  id        String      @id @default(cuid())
+  userId    String
+  projectId String
+  role      ProjectRole @default(VIEWER)
+  hidden    Boolean     @default(false)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+  SUPERADMIN
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  DEV
+  MEMBER
+}
+
+enum ProjectRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model VaultEntry {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  url                 String?
+  username            String?
+  encryptedPassword   String?
+  passwordIv          String?
+  passwordTag         String?
+  encryptedTotpSecret String?
+  totpSecretIv        String?
+  totpSecretTag       String?
+  tags                String[] @default([])
+  favorite            Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model TeamVaultCollection {
+  id             String            @id @default(cuid())
+  organizationId String?
+  organization   Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String?
+  project        Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  entries        TeamVaultEntry[]
+  members        TeamVaultMember[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([organizationId, slug])
+  @@unique([projectId, slug])
+  @@index([organizationId])
+  @@index([projectId])
+}
+
+model TeamVaultEntry {
+  id                  String              @id @default(cuid())
+  collectionId        String
+  collection          TeamVaultCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  name                String
+  url                 String?
+  username            String?
+  encryptedPassword   String?
+  passwordIv          String?
+  passwordTag         String?
+  encryptedTotpSecret String?
+  totpSecretIv        String?
+  totpSecretTag       String?
+  tags                String[]            @default([])
+  favorite            Boolean             @default(false)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([collectionId])
+}
+
+model TeamVaultMember {
+  id           String              @id @default(cuid())
+  collectionId String
+  userId       String
+  role         VaultRole           @default(VIEWER)
+  collection   TeamVaultCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+
+  @@unique([collectionId, userId])
+}
+
+enum VaultRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model AccessLog {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  projectId      String?
+  project        Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  environmentId  String?
+  actorUserId    String?
+  actorUser      User?         @relation("accessLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorUserEmail String?
+  actorTokenId   String?
+  actorTokenName String?
+  action         AccessAction
+  targetType     String?
+  targetId       String?
+  secretKey      String?
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+}
+
+model OneTimeShare {
+  id               String        @id @default(cuid())
+  tokenHash        String        @unique
+  ciphertext       String
+  iv               String
+  title            String?
+  passwordHash     String?
+  passwordAttempts Int           @default(0)
+  createdById      String
+  createdBy        User          @relation("oneTimeShareCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  createdByEmail   String
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  viewedFromIp     String?
+  revokedAt        DateTime?
+  createdAt        DateTime      @default(now())
+
+  @@index([createdById])
+  @@index([expiresAt])
+}
+
+enum AccessAction {
+  SECRET_CREATE
+  SECRET_UPDATE
+  SECRET_DELETE
+  SECRET_REVEAL
+  SECRET_FETCH_BULK
+  TOKEN_CREATE
+  TOKEN_REVOKE
+  TOKEN_USE_FAILED
+  MEMBER_INVITE
+  MEMBER_INVITE_ACCEPT
+  MEMBER_INVITE_DECLINE
+  MEMBER_ROLE_CHANGE
+  MEMBER_REMOVE
+  PROJECT_CREATE
+  PROJECT_UPDATE
+  PROJECT_DELETE
+  PROJECT_MEMBER_VISIBILITY_CHANGE
+  PROJECT_MEMBER_ROLE_CHANGE
+  ENVIRONMENT_CREATE
+  ENVIRONMENT_UPDATE
+  ENVIRONMENT_DELETE
+  ORG_CREATE
+  ORG_UPDATE
+  ORG_DELETE
+  ORG_SECRET_CREATE
+  ORG_SECRET_UPDATE
+  ORG_SECRET_DELETE
+  ORG_SECRET_REVEAL
+  SERVICE_CREATE
+  SERVICE_UPDATE
+  SERVICE_DELETE
+  SERVICE_REVEAL
+  ACCOUNT_CREATE
+  ACCOUNT_UPDATE
+  ACCOUNT_DELETE
+  ACCOUNT_REVEAL
+  REDEPLOY_TRIGGERED
+  COMPOSE_FETCHED
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  TWO_FACTOR_ENABLED
+  TWO_FACTOR_DISABLED
+  TWO_FACTOR_SUCCESS
+  TWO_FACTOR_FAILURE
+  BACKUP_CODE_USED
+  SERVER_CREATE
+  SERVER_UPDATE
+  SERVER_DELETE
+  POLICY_CREATE
+  POLICY_UPDATE
+  POLICY_DELETE
+  DEPLOY_AUTHORIZED
+  DEPLOY_DENIED
+  PLUGIN_AUTH_SUCCESS
+  PLUGIN_AUTH_FAILURE
+  PLUGIN_CREDENTIALS_FETCH
+  PLUGIN_TOKEN_REVOKED
+  VAULT_ENTRY_CREATE
+  VAULT_ENTRY_UPDATE
+  VAULT_ENTRY_DELETE
+  VAULT_ENTRY_REVEAL
+  VAULT_ENTRY_MOVE
+  VAULT_COLLECTION_CREATE
+  VAULT_COLLECTION_DELETE
+  VAULT_MEMBER_ADD
+  VAULT_MEMBER_REMOVE
+  VAULT_MEMBER_ROLE_CHANGE
+  SHARE_CREATE
+  SHARE_CONSUME
+  SHARE_REVOKE
+  SHARE_SEND_EMAIL
+  SHARE_PASSWORD_FAILURE
+  SECRET_REQUEST_CREATED
+  SECRET_REQUEST_SUBMITTED
+  SECRET_REQUEST_REVEALED
+  SECRET_REQUEST_IMPORTED
+  SECRET_REQUEST_REVOKED
+  SECRET_REQUEST_EXPIRED
+}
+
+/// Demande de secret externe (Phase 9). Un user DEV+ crée la demande,
+/// reçoit un lien `<vault>/request/<token>` à transmettre au tiers
+/// (qui n'a pas de compte Physalis). Le tiers chiffre son secret côté
+/// navigateur via ECDH P-256 + AES-GCM puis le poste — Physalis stocke
+/// le ciphertext sans pouvoir le déchiffrer (sauf si l'admin sauvegarde
+/// sa clé privée dans son coffre, qui est lui-même chiffré au repos).
+///
+/// Lien one-shot : invalidé après soumission OU 48h.
+model SecretRequest {
+  id                 String        @id @default(cuid())
+  /// SHA-256 du token brut (`sv_extreq_<32hex>`). Le brut n'est jamais stocké.
+  tokenHash          String        @unique
+  /// Label visible par le destinataire (ex: "Clé API Stripe production").
+  label              String
+  /// Description optionnelle, visible par le destinataire.
+  description        String?
+  /// Auteur de la demande (FK SetNull pour conserver la trace).
+  requestedById      String?
+  requestedBy        User?         @relation("secretRequestCreator", fields: [requestedById], references: [id], onDelete: SetNull)
+  /// Email auteur dénormalisé (subsiste après suppression de l'user).
+  requestedByEmail   String
+  /// Email destinataire optionnel — si rempli, envoi auto via Mailgun.
+  recipientEmail     String?
+  /// Org propriétaire de la demande (Cascade : delete org → delete requests).
+  organizationId     String
+  organization       Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Cible projet optionnelle (SetNull pour garder la trace même après
+  /// suppression du projet — l'import devient impossible mais l'audit reste).
+  projectId          String?
+  project            Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// Nom de l'environnement cible (string, pas FK — l'env peut être renommé).
+  environmentName    String?
+  /// Clé .env cible (ex: "STRIPE_SECRET_KEY"). Validée à l'import contre /^[A-Z][A-Z0-9_]*$/.
+  secretKey          String?
+  /// Clé publique ECDH P-256 sérialisée JWK. Stockée à la création,
+  /// jamais sensible (publique par essence).
+  publicKeyJwk       String
+  /// Ciphertext base64 (AES-GCM). Vide tant que non soumis. Effacé après import/revoke.
+  encryptedSecret    String?
+  /// IV AES-GCM base64. Idem.
+  secretIv           String?
+  /// Clé publique éphémère du client (JWK). Idem — le serveur en a besoin
+  /// pour donner à l'admin de quoi dériver la clé symétrique au moment du reveal.
+  ephemeralPublicKey String?
+  submittedAt        DateTime?
+  /// IP du soumetteur (audit, abuse-tracking).
+  submitterIp        String?
+  /// TTL strict 48h depuis createdAt.
+  expiresAt          DateTime
+  viewedAt           DateTime?
+  importedAt         DateTime?
+  revokedAt          DateTime?
+  createdAt          DateTime      @default(now())
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([expiresAt])
+}

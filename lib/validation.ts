@@ -1,0 +1,110 @@
+// Fonctions de validation et de normalisation pures (sans dépendance Prisma /
+// NextAuth). Permet de les tester sans charger la stack serveur entière.
+
+const SLUG_BAD_CHARS = /[^a-z0-9]+/g;
+const DIACRITICS = /[̀-ͯ]/g;
+
+export function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(DIACRITICS, "")
+    .replace(SLUG_BAD_CHARS, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+// Slug d'un client SaaS Physalis. Sert aussi de base pour le nom de
+// schéma PostgreSQL `client_<slug>` provisionné en Phase 3 — Postgres
+// limite les identifiers à 63 bytes ; `client_` consomme 7, on cape donc
+// le slug à 50 caractères pour garder une marge.
+const CLIENT_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/;
+export function isValidClientSlug(slug: string): boolean {
+  return CLIENT_SLUG_RE.test(slug);
+}
+
+const SECRET_KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
+export function isValidSecretKey(key: string): boolean {
+  return SECRET_KEY_RE.test(key);
+}
+
+const ENV_NAME_RE = /^[a-z][a-z0-9-]{0,30}$/;
+export function isValidEnvName(name: string): boolean {
+  return ENV_NAME_RE.test(name);
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export function isValidEmail(email: string): boolean {
+  return EMAIL_RE.test(email);
+}
+
+// Nom de serveur libre (1-60 chars, pas de \n / contrôle).
+const SERVER_NAME_RE = /^[\p{L}\p{N}_\-. ]{1,60}$/u;
+export function isValidServerName(name: string): boolean {
+  return SERVER_NAME_RE.test(name);
+}
+
+/**
+ * Chemin de deploy par defaut sur le VPS quand `Environment.deployPath`
+ * n'est pas renseigne. Convention argoweb : `/srv/projets/<env>/<slug>`.
+ * Calcule a chaque appel /api/deploy et au runtime UI (placeholder).
+ * Si l'env ou le projet est rename, le path bouge automatiquement.
+ */
+export function defaultDeployPath(envName: string, projectSlug: string): string {
+  return `/srv/projets/${envName}/${projectSlug}`;
+}
+
+// IP v4/v6 ou hostname FQDN. Pas de validation parfaite, mais filtre les
+// inputs absurdes (espaces, scheme, multi-lignes).
+const SERVER_HOST_RE = /^[A-Za-z0-9.:_-]{1,253}$/;
+export function isValidServerHost(host: string): boolean {
+  return SERVER_HOST_RE.test(host);
+}
+
+// SSH login : format POSIX permissif (`[a-z_][a-z0-9_-]{0,31}`), comportement
+// adduser standard.
+const SSH_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+export function isValidSshUser(user: string): boolean {
+  return SSH_USER_RE.test(user);
+}
+
+// GitHub repo "owner/repo" — owner et repo suivent les regles GitHub
+// (lettres/chiffres/`-`/`_`/`.`, max 39 chars chacun).
+const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/;
+export function isValidGithubRepo(repo: string): boolean {
+  return GITHUB_REPO_RE.test(repo);
+}
+
+// Workflow file basename : lettres/chiffres/`-`/`_`/`.`, doit finir par
+// `.yml` ou `.yaml`.
+const WORKFLOW_FILE_RE = /^[A-Za-z0-9_.-]{1,80}\.(yml|yaml)$/;
+export function isValidWorkflowFile(file: string): boolean {
+  return WORKFLOW_FILE_RE.test(file);
+}
+
+// Branch git — accepte les caracteres usuels mais refuse `..`, `~`, `^`,
+// `:`, espaces, controle (cf. git-check-ref-format). On reste strict
+// volontairement : pas de wildcard.
+const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
+export function isValidGitBranch(branch: string): boolean {
+  if (!BRANCH_RE.test(branch)) return false;
+  if (branch.includes("..")) return false;
+  if (branch.endsWith("/") || branch.endsWith(".") || branch.endsWith(".lock")) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Sanity check minimal sur un blob de cle privee SSH. On accepte les formats
+ * OpenSSH (`-----BEGIN OPENSSH PRIVATE KEY-----`) et PEM RSA/EC/Ed25519.
+ * Le but n'est pas de parser la cle, juste de refuser les inputs vides /
+ * tronques avant de les chiffrer en base.
+ */
+export function isValidSshPrivateKey(input: string): boolean {
+  const trimmed = input.trim();
+  if (trimmed.length < 100) return false;
+  if (!/^-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----/.test(trimmed)) return false;
+  if (!/-----END [A-Z0-9 ]+PRIVATE KEY-----$/.test(trimmed)) return false;
+  return true;
+}

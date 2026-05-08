@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.env
+.env.local
+.env.*.local
+docs
+!docs/documentation
+README.md
+AGENTS.md
+CLAUDE.md
+.dockerignore
+Dockerfile
+docker-compose*.yml
+**/.DS_Store
+*.log
+coverage

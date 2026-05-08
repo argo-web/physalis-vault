@@ -1,0 +1,44 @@
+services:
+  app:
+    build: .
+    container_name: physalis
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://physalis:${DB_PASSWORD}@db:5432/physalis
+    ports:
+      # 3000 souvent occupe sur l'hote (Grafana...). On expose sur 3001.
+      - "3001:3000"
+    # tmpfs pour le cache Next.js (rootfs read-only, /app/.next/cache écrivable
+    # en mémoire). Évite les "ENOENT mkdir '/app/.next/cache'" qui spamment les
+    # logs à chaque request d'image optimisée.
+    tmpfs:
+      - /app/.next/cache
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+
+  db:
+    image: postgres:16-alpine
+    container_name: physalis-db
+    restart: always
+    environment:
+      POSTGRES_USER: physalis
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: physalis
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U physalis"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pg_data:
+
+networks:
+  internal:

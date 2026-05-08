@@ -1,0 +1,160 @@
+# .github/workflows/redeploy.yml
+#
+# Redeploy OIDC — variante sans rebuild d'image.
+#
+# Differences avec deploy.yml :
+#   - Pas de job `build-push` (on ne reconstruit pas l'image)
+#   - Declenchement manuel uniquement (workflow_dispatch + input env)
+#   - Pull du `dockerCompose` depuis le bundle /api/deploy
+#   - `docker compose up -d --no-build` (respecte le tag d'image courant)
+#
+# Pre-requis cote Physalis (admin) :
+#   1. Server cree (cle SSH github-deploy)
+#   2. Environnement lie au server + deployPath configure
+#   3. Optionnel : `dockerCompose` configure pour l'env
+#      (UI : /projects/<slug> → onglet env → docker-compose)
+#   4. Policy : (repo, redeploy.yml, branch) → (project, env)
+#      ⚠ une policy distincte de deploy.yml — le `workflow` claim diffère
+
+name: Redeploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environnement cible'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - production
+          - staging
+
+env:
+  VAULT_URL: https://vault.physalis.cloud
+  VAULT_AUDIENCE: vault.physalis.cloud
+  VAULT_PROJECT: physalis
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken(process.env.VAULT_AUDIENCE)
+            core.setSecret(token)
+            core.setOutput('token', token)
+
+      - name: Fetch deploy bundle
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          VAULT_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          response=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"project\":\"${VAULT_PROJECT}\",\"environment\":\"${VAULT_ENV}\"}" \
+            "${VAULT_URL}/api/deploy")
+
+          if [ -z "$response" ]; then
+            echo "::error::/api/deploy returned empty body"
+            exit 1
+          fi
+
+          # Masque la cle SSH (multi-lignes) avant tout traitement.
+          while IFS= read -r line; do
+            [ -n "$line" ] && echo "::add-mask::$line"
+          done < <(printf '%s' "$response" | jq -r '.sshKey')
+
+          # Masque le PAT registry s'il est present dans le bundle.
+          registry_pat=$(printf '%s' "$response" | jq -r '.registry.pat // empty')
+          [ -n "$registry_pat" ] && echo "::add-mask::$registry_pat"
+
+          printf '%s' "$response" > "$RUNNER_TEMP/bundle.json"
+          jq -r '.sshKey' "$RUNNER_TEMP/bundle.json" > "$RUNNER_TEMP/id_deploy"
+          chmod 600 "$RUNNER_TEMP/id_deploy"
+          jq -r '.secrets | to_entries[] | "\(.key)=\(.value)"' \
+            "$RUNNER_TEMP/bundle.json" > "$RUNNER_TEMP/.env"
+
+          # Extraction du docker-compose si fourni par le vault.
+          # Si null/absent → on garde celui present sur le VPS.
+          compose=$(jq -r '.dockerCompose // empty' "$RUNNER_TEMP/bundle.json")
+          if [ -n "$compose" ]; then
+            printf '%s' "$compose" > "$RUNNER_TEMP/docker-compose.yml"
+            echo "✓ docker-compose.yml fourni par le vault"
+          else
+            echo "::warning::aucun dockerCompose configure pour cet env, le fichier present sur le VPS sera reutilise"
+          fi
+
+      - name: Redeploy via SSH
+        env:
+          VAULT_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          IP=$(jq -r '.serverIp'    "$RUNNER_TEMP/bundle.json")
+          SSH_USER=$(jq -r '.serverUser'  "$RUNNER_TEMP/bundle.json")
+          DPATH=$(jq -r '.deployPath'  "$RUNNER_TEMP/bundle.json")
+
+          REGISTRY_URL=$(jq -r '.registry.url // empty'  "$RUNNER_TEMP/bundle.json")
+          REGISTRY_USER=$(jq -r '.registry.user // empty' "$RUNNER_TEMP/bundle.json")
+          REGISTRY_PAT=$(jq -r '.registry.pat // empty'  "$RUNNER_TEMP/bundle.json")
+
+          SSH_OPTS="-i $RUNNER_TEMP/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+
+          # Push .env (toujours).
+          # shellcheck disable=SC2086
+          scp $SSH_OPTS "$RUNNER_TEMP/.env" "$SSH_USER@$IP:$DPATH/.env.new"
+
+          # Push docker-compose.yml (si fourni).
+          HAS_COMPOSE=0
+          if [ -f "$RUNNER_TEMP/docker-compose.yml" ]; then
+            # shellcheck disable=SC2086
+            scp $SSH_OPTS "$RUNNER_TEMP/docker-compose.yml" \
+              "$SSH_USER@$IP:$DPATH/docker-compose.yml.new"
+            HAS_COMPOSE=1
+          fi
+
+          # Atomic swap + (optionnel) login registry + restart sans rebuild.
+          # shellcheck disable=SC2086
+          ssh $SSH_OPTS "$SSH_USER@$IP" \
+            "DEPLOY_DIR='$DPATH' HAS_COMPOSE='$HAS_COMPOSE' REGISTRY_URL='$REGISTRY_URL' REGISTRY_USER='$REGISTRY_USER' REGISTRY_PAT='$REGISTRY_PAT' bash -s" <<'ENDSSH'
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          mv .env.new .env
+          if [ "$HAS_COMPOSE" = "1" ]; then
+            mv docker-compose.yml.new docker-compose.yml
+          fi
+
+          if [ -n "${REGISTRY_PAT:-}" ] && [ -n "${REGISTRY_USER:-}" ]; then
+            REG="${REGISTRY_URL:-ghcr.io}"
+            printf '%s' "$REGISTRY_PAT" | docker login "$REG" -u "$REGISTRY_USER" --password-stdin
+          fi
+
+          # Pas de pull : on respecte le tag d'image courant.
+          docker compose up -d --no-build --remove-orphans
+
+          if [ -n "${REGISTRY_URL:-}" ]; then
+            docker logout "$REGISTRY_URL" 2>/dev/null || true
+          fi
+          ENDSSH
+
+          echo "✓ Redéploiement ${VAULT_ENV} terminé"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/bundle.json" "$RUNNER_TEMP/id_deploy" \
+                "$RUNNER_TEMP/.env" "$RUNNER_TEMP/docker-compose.yml" \
+                "$RUNNER_TEMP/known_hosts"

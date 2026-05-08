@@ -1,0 +1,47 @@
+{
+  "name": "physalis",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integ": "vitest run --config vitest.integ.config.ts",
+    "bootstrap-admin": "node scripts/bootstrap-admin.mjs",
+    "prisma:generate": "prisma generate --schema=prisma/tenant-schema.prisma && prisma generate --schema=prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@remixicon/react": "^4.9.0",
+    "bcryptjs": "^3.0.3",
+    "form-data": "^4.0.5",
+    "jose": "^6.2.3",
+    "mailgun.js": "^13.0.0",
+    "marked": "^18.0.3",
+    "next": "^15.5.15",
+    "next-auth": "^5.0.0-beta.31",
+    "otplib": "^13.4.0",
+    "prisma": "^6.19.3",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.5.0",
+    "eslint": "^9",
+    "eslint-config-next": "^15.5.15",
+    "postcss": "^8.5.13",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,295 @@
+# .github/workflows/deploy.yml
+#
+# Aucun secret GitHub n'est utilise. L'authentification se fait via le token
+# OIDC produit par GitHub Actions (signe par GitHub) que Physalis valide
+# contre une `Policy` (repo, workflow, branche) avant de retourner le bundle
+# de deploiement (secrets + creds SSH + path).
+#
+# ─── Pre-requis cote Physalis ────────────────────────────────────────────
+#
+#   1. Server (org-level) cree avec la cle SSH github-deploy de la VPS cible
+#   2. Environnement du projet lie a ce Server + `deployPath` configure
+#   3. Policy creee : (repo, workflow, branche) → (project, environment)
+#      Exemple : (argo-web/physalis, deploy.yml, main) → (physalis, production)
+#   4. Physalis accessible publiquement en HTTPS depuis api.github.com
+#
+# ─── Variables a adapter ────────────────────────────────────────────────────
+#
+#   VAULT_URL        : URL du Physalis (ex. https://vault.physalis.cloud)
+#   VAULT_AUDIENCE   : audience OIDC, doit matcher `OIDC_AUDIENCE` du vault
+#   VAULT_PROJECT    : slug du projet dans le vault
+#   VAULT_ENV        : environnement cible (production, staging, ...)
+#
+# Aucun `secrets.*` n'est consomme dans ce workflow — c'est volontaire.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write    # requis pour core.getIDToken()
+  contents: read
+  packages: write    # requis pour pousser sur GHCR avec GITHUB_TOKEN
+
+env:
+  VAULT_URL: https://vault.physalis.cloud
+  VAULT_AUDIENCE: vault.physalis.cloud
+  VAULT_PROJECT: physalis
+  VAULT_ENV: main
+
+jobs:
+  # ── Job 1 : build + push image GHCR ─────────────────────────────────────
+  # Utilise le GITHUB_TOKEN natif (scope packages:write au niveau workflow).
+  # Pas besoin de PAT stocke. L'image est tagguee `:latest` + `:<sha>` pour
+  # tracabilite, et matche le pattern attendu par docker-compose :
+  #   ghcr.io/<owner>/<repo>-<ENVIRONMENT>-frontend:latest
+  #
+  # Les variables VITE_* sont fetchees depuis le vault au moment du build
+  # et injectees comme `--build-arg` dans le `docker build`. Le Dockerfile
+  # frontend doit les declarer (`ARG VITE_FOO` puis `ENV VITE_FOO=$VITE_FOO`)
+  # pour qu'elles soient lues par Vite au moment du `npm run build`.
+  build:
+    name: Build & push frontend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write   # requis pour core.getIDToken() (fetch VITE_* via OIDC)
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image name (lowercase, GHCR-compliant)
+        id: meta
+        run: |
+          set -euo pipefail
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${REPO_LOWER}-${VAULT_ENV}-frontend" >> "$GITHUB_OUTPUT"
+
+      # ── OIDC + fetch des VITE_* depuis le vault ─────────────────────────
+      # Memes Policy + tenant que le job deploy : le bundle complet est
+      # renvoye, on ne garde que les cles prefixees `VITE_*`. Les autres
+      # secrets (sshKey, DB_*, API keys server-side) sont ignores ici —
+      # ils sont consommes au runtime via le `.env` que le job deploy push.
+      - name: Get OIDC token (build)
+        id: oidc_build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken(process.env.VAULT_AUDIENCE)
+            core.setSecret(token)
+            core.setOutput('token', token)
+
+      - name: Fetch VITE_* build args from vault
+        id: vite_args
+        env:
+          OIDC_TOKEN: ${{ steps.oidc_build.outputs.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          response=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"project\":\"${VAULT_PROJECT}\",\"environment\":\"${VAULT_ENV}\"}" \
+            "${VAULT_URL}/api/deploy")
+
+          if [ -z "$response" ]; then
+            echo "::error::/api/deploy returned empty body"
+            exit 1
+          fi
+
+          # Masque la sshKey + registry PAT au cas ou (le runner les a
+          # recus mais on ne les utilise pas dans ce job — par precaution).
+          while IFS= read -r line; do
+            [ -n "$line" ] && echo "::add-mask::$line"
+          done < <(printf '%s' "$response" | jq -r '.sshKey')
+          registry_pat=$(printf '%s' "$response" | jq -r '.registry.pat // empty')
+          [ -n "$registry_pat" ] && echo "::add-mask::$registry_pat"
+
+          # Extraction VITE_* uniquement. Les valeurs sont par convention
+          # publiques (Vite les inline dans le bundle JS final) — pas besoin
+          # de masquer dans les logs, mais on le fait quand meme par hygiene.
+          while IFS= read -r v; do
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done < <(printf '%s' "$response" | jq -r '.secrets | to_entries[] | select(.key | startswith("VITE_")) | .value')
+
+          # Multi-line GITHUB_OUTPUT via heredoc — docker/build-push-action
+          # accepte la meme syntaxe (1 build-arg par ligne, format KEY=VALUE).
+          {
+            echo "build_args<<VITE_EOF"
+            printf '%s' "$response" | jq -r '.secrets | to_entries[] | select(.key | startswith("VITE_")) | "\(.key)=\(.value)"'
+            echo "VITE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          build-args: ${{ steps.vite_args.outputs.build_args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Job 2 : deploiement OIDC sur le VPS ─────────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Token OIDC ────────────────────────────────────────────────────
+      # `audience` doit exactement matcher `OIDC_AUDIENCE` cote Physalis
+      # (sinon le vault refuse avec 401 wrong_audience).
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken(process.env.VAULT_AUDIENCE)
+            core.setSecret(token)            // masque le token dans les logs
+            core.setOutput('token', token)
+
+      # ── 2. Bundle de deploiement ─────────────────────────────────────────
+      # /api/deploy renvoie : serverIp, serverUser, sshKey, deployPath, secrets.
+      # On masque la sshKey immediatement (::add-mask::) avant tout traitement.
+      - name: Fetch deploy bundle
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          # DEBUG : -f retire pour voir le body en cas de 4xx, et -w pour le code HTTP
+          http_code=$(curl -s -o "$RUNNER_TEMP/api_response.txt" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"project\":\"${VAULT_PROJECT}\",\"environment\":\"${VAULT_ENV}\"}" \
+            "${VAULT_URL}/api/deploy")
+
+          response=$(cat "$RUNNER_TEMP/api_response.txt")
+
+          if [ "$http_code" != "200" ]; then
+            echo "::error::HTTP $http_code from /api/deploy"
+            echo "Response body: $response"
+            exit 1
+          fi
+
+          if [ -z "$response" ]; then
+            echo "::error::/api/deploy returned empty body"
+            exit 1
+          fi
+
+          # Masque la cle SSH dans les logs avant qu'elle ne puisse fuiter.
+          while IFS= read -r line; do
+            [ -n "$line" ] && echo "::add-mask::$line"
+          done < <(printf '%s' "$response" | jq -r '.sshKey')
+
+          # Masque le PAT registry s'il est present dans le bundle.
+          registry_pat=$(printf '%s' "$response" | jq -r '.registry.pat // empty')
+          [ -n "$registry_pat" ] && echo "::add-mask::$registry_pat"
+
+          # Bundle ecrit dans des fichiers temporaires (RUNNER_TEMP pointe
+          # vers un repertoire ephemere, supprime automatiquement par le
+          # runner en fin de job).
+          printf '%s' "$response" > "$RUNNER_TEMP/bundle.json"
+          jq -r '.sshKey' "$RUNNER_TEMP/bundle.json" > "$RUNNER_TEMP/id_deploy"
+          chmod 600 "$RUNNER_TEMP/id_deploy"
+          jq -r '.secrets | to_entries[] | "\(.key)=\(.value)"' \
+            "$RUNNER_TEMP/bundle.json" > "$RUNNER_TEMP/.env"
+
+      # ── 3. Push .env + docker-compose + redeploy via SSH ─────────────────
+      # `accept-new` = TOFU (l'IP est validee par la cle privee, et on
+      # change rarement de VPS). Un pin known_hosts plus strict est possible
+      # en stockant le hostkey dans une OrgSecret, a discretion.
+      #
+      # Les credentials registry (REGISTRY_PAT/REGISTRY_USER) sont passees
+      # via env var SSH (non-persistees), pour qu'elles ne touchent JAMAIS
+      # le `.env` du conteneur.
+      - name: Deploy via SSH
+        run: |
+          set -euo pipefail
+          IP=$(jq -r '.serverIp'    "$RUNNER_TEMP/bundle.json")
+          SSH_USER=$(jq -r '.serverUser'  "$RUNNER_TEMP/bundle.json")
+          DPATH=$(jq -r '.deployPath'  "$RUNNER_TEMP/bundle.json")
+
+          REGISTRY_URL=$(jq -r '.registry.url // empty'  "$RUNNER_TEMP/bundle.json")
+          REGISTRY_USER=$(jq -r '.registry.user // empty' "$RUNNER_TEMP/bundle.json")
+          REGISTRY_PAT=$(jq -r '.registry.pat // empty'  "$RUNNER_TEMP/bundle.json")
+
+          SSH_OPTS="-i $RUNNER_TEMP/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+
+          # Push .env (toujours).
+          # shellcheck disable=SC2086
+          scp $SSH_OPTS "$RUNNER_TEMP/.env" "$SSH_USER@$IP:$DPATH/.env.new"
+
+          # Push docker-compose.yml si fourni par le vault.
+          HAS_COMPOSE=0
+          if [ -s "$RUNNER_TEMP/docker-compose.yml" ] 2>/dev/null; then :; fi
+          compose=$(jq -r '.dockerCompose // empty' "$RUNNER_TEMP/bundle.json")
+          if [ -n "$compose" ]; then
+            printf '%s' "$compose" > "$RUNNER_TEMP/docker-compose.yml"
+            # shellcheck disable=SC2086
+            scp $SSH_OPTS "$RUNNER_TEMP/docker-compose.yml" \
+              "$SSH_USER@$IP:$DPATH/docker-compose.yml.new"
+            HAS_COMPOSE=1
+          fi
+
+          # Atomic swap + login registry + restart. Les creds registry
+          # sont passees au shell distant via prefixage env vars (visibles
+          # uniquement le temps du `bash -s`, pas dans le `.env` du conteneur).
+          # shellcheck disable=SC2086
+          ssh $SSH_OPTS "$SSH_USER@$IP" \
+            "DEPLOY_DIR='$DPATH' HAS_COMPOSE='$HAS_COMPOSE' REGISTRY_URL='$REGISTRY_URL' REGISTRY_USER='$REGISTRY_USER' REGISTRY_PAT='$REGISTRY_PAT' bash -s" <<'ENDSSH'
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          mv .env.new .env
+          if [ "$HAS_COMPOSE" = "1" ]; then
+            mv docker-compose.yml.new docker-compose.yml
+          fi
+
+          if [ -n "${REGISTRY_PAT:-}" ] && [ -n "${REGISTRY_USER:-}" ]; then
+            REG="${REGISTRY_URL:-ghcr.io}"
+            printf '%s' "$REGISTRY_PAT" | docker login "$REG" -u "$REGISTRY_USER" --password-stdin
+          fi
+
+          docker compose pull
+          docker compose up -d --no-build --remove-orphans
+          docker image prune -f
+
+          if [ -n "${REGISTRY_URL:-}" ]; then
+            docker logout "$REGISTRY_URL" 2>/dev/null || true
+          fi
+          ENDSSH
+
+      # ── 4. Cleanup obligatoire ───────────────────────────────────────────
+      # Le runner GitHub nettoie RUNNER_TEMP automatiquement en fin de job,
+      # mais on force la suppression ici pour reduire la fenetre d'exposition
+      # en cas de redeploiement / job parallele.
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/bundle.json" "$RUNNER_TEMP/id_deploy" \
+                "$RUNNER_TEMP/.env" "$RUNNER_TEMP/docker-compose.yml" \
+                "$RUNNER_TEMP/known_hosts"

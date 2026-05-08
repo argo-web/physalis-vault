@@ -1,0 +1,149 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
+import RateLimitAlert from "@/components/RateLimitAlert";
+
+export default function InvitationRegisterForm({
+  token,
+  email,
+  organizationName,
+  organizationSlug,
+  inviterEmail,
+  role,
+  tenantSlug,
+}: {
+  token: string;
+  email: string;
+  organizationName: string;
+  organizationSlug: string;
+  inviterEmail: string;
+  role: string;
+  /** Slug du tenant (subdomain) — passé à signIn pour que l'auth resolve
+   *  le user dans `client_<slug>.User` au lieu de `public.User`. */
+  tenantSlug: string;
+}) {
+  const router = useRouter();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    setRateLimited(false);
+    if (password !== confirm) {
+      setError("Les mots de passe ne correspondent pas.");
+      return;
+    }
+    startTransition(async () => {
+      const res = await fetch(`/api/invitations/${token}/register-and-accept`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(data?.error ?? "Création impossible.");
+        return;
+      }
+      // Le compte est cree. Auto-signIn avec le tenantSlug pour que
+      // authorize() résolve l'user dans client_<slug>.User. Sans ça la
+      // signIn tape sur public.User (broken depuis Phase 4) et échoue.
+      // Peut aussi echouer si rate-limit /api/auth/callback/credentials
+      // atteint (5/15min/IP) → on bascule sur l'alerte dediee.
+      let signed: Awaited<ReturnType<typeof signIn>> | null = null;
+      try {
+        signed = await signIn("credentials", {
+          email,
+          password,
+          tenantSlug,
+          redirect: false,
+        });
+      } catch {
+        // signIn() peut throw "Failed to construct URL" quand la response
+        // n'est pas le JSON attendu (ex. 429 HTML).
+        setRateLimited(true);
+        return;
+      }
+      if (!signed || signed.error) {
+        // Auto-signIn KO (rate limit, ou autre). Redirige vers le login
+        // tenant — l'user retape ses creds là-bas. Pas de message manuel.
+        router.push("/login");
+        return;
+      }
+      await fetch("/api/me/current-org", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slug: organizationSlug }),
+      });
+      router.push(`/orgs/${organizationSlug}`);
+      router.refresh();
+    });
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="login-form">
+      <div className="help" style={{ textAlign: "center" }}>
+        <strong>{inviterEmail}</strong> vous invite à rejoindre{" "}
+        <strong>{organizationName}</strong> avec le rôle{" "}
+        <span className={`role role-${role.toLowerCase()}`}>{role}</span>.
+      </div>
+      <div
+        className="help code-mono"
+        style={{
+          textAlign: "center",
+          padding: 8,
+          background: "var(--code-bg)",
+          borderRadius: 8,
+        }}
+      >
+        {email}
+      </div>
+
+      <div className="field">
+        <label>Mot de passe (12 caractères minimum)</label>
+        <input
+          type="password"
+          required
+          minLength={12}
+          autoFocus
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="input"
+        />
+      </div>
+
+      <div className="field">
+        <label>Confirmer le mot de passe</label>
+        <input
+          type="password"
+          required
+          minLength={12}
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          className="input"
+        />
+      </div>
+
+      {rateLimited && <RateLimitAlert />}
+      {!rateLimited && error && <p className="error-text">{error}</p>}
+
+      <button
+        type="submit"
+        disabled={pending}
+        className="btn btn-primary"
+        style={{ marginTop: 6, padding: "11px 16px", justifyContent: "center" }}
+      >
+        {pending ? "Création..." : "Créer mon compte et accepter"}
+      </button>
+    </form>
+  );
+}

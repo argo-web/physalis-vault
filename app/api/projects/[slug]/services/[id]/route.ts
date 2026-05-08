@@ -1,0 +1,184 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { decrypt, encrypt } from "@/lib/crypto";
+import { readJson, requireProjectMember } from "@/lib/api";
+import { logAction } from "@/lib/audit";
+
+type Params = { params: Promise<{ slug: string; id: string }> };
+
+function decryptCreds(payload: {
+  encryptedData: string;
+  iv: string;
+  tag: string;
+}): { user: string; password: string } {
+  const json = decrypt({
+    encryptedValue: payload.encryptedData,
+    iv: payload.iv,
+    tag: payload.tag,
+  });
+  const parsed = JSON.parse(json) as { user?: string; password?: string };
+  return {
+    user: parsed.user ?? "",
+    password: parsed.password ?? "",
+  };
+}
+
+// Reveal a service with its decrypted credentials.
+export async function GET(req: Request, { params }: Params) {
+  const { slug, id } = await params;
+  const access = await requireProjectMember(slug);
+  if ("error" in access) return access.error;
+
+  const service = await prisma.service.findFirst({
+    where: { id, projectId: access.project.id },
+  });
+  if (!service) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const creds = decryptCreds(service);
+
+  logAction({
+    action: "SERVICE_REVEAL",
+    actor: { kind: "user", userId: access.user.id, email: access.user.email },
+    organizationId: access.project.organizationId,
+    projectId: access.project.id,
+    targetType: "Service",
+    targetId: service.id,
+    metadata: { name: service.name },
+    req,
+  });
+
+  return NextResponse.json({
+    service: {
+      id: service.id,
+      name: service.name,
+      url: service.url,
+      user: creds.user,
+      password: creds.password,
+    },
+  });
+}
+
+export async function PATCH(req: Request, { params }: Params) {
+  const { slug, id } = await params;
+  const access = await requireProjectMember(slug, "EDITOR");
+  if ("error" in access) return access.error;
+
+  const service = await prisma.service.findFirst({
+    where: { id, projectId: access.project.id },
+  });
+  if (!service) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const body = (await readJson(req)) as
+    | {
+        name?: string;
+        url?: string | null;
+        user?: string;
+        password?: string;
+      }
+    | null;
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  }
+
+  const data: {
+    name?: string;
+    url?: string | null;
+    encryptedData?: string;
+    iv?: string;
+    tag?: string;
+  } = {};
+  const changed: string[] = [];
+
+  if (typeof body.name === "string") {
+    const newName = body.name.trim();
+    if (!newName) {
+      return NextResponse.json({ error: "Nom requis" }, { status: 400 });
+    }
+    if (newName !== service.name) {
+      data.name = newName;
+      changed.push("name");
+    }
+  }
+
+  if ("url" in body) {
+    const newUrl =
+      body.url === null || body.url === "" ? null : body.url?.trim() ?? null;
+    if (newUrl !== service.url) {
+      data.url = newUrl;
+      changed.push("url");
+    }
+  }
+
+  // If user OR password is provided, re-encrypt the blob with both fields.
+  // Existing values preserved for fields not in the body.
+  if (typeof body.user === "string" || typeof body.password === "string") {
+    const existing = decryptCreds(service);
+    const newUser = typeof body.user === "string" ? body.user : existing.user;
+    const newPassword =
+      typeof body.password === "string" ? body.password : existing.password;
+    const payload = encrypt(
+      JSON.stringify({ user: newUser, password: newPassword }),
+    );
+    data.encryptedData = payload.encryptedValue;
+    data.iv = payload.iv;
+    data.tag = payload.tag;
+    if (typeof body.user === "string") changed.push("user");
+    if (typeof body.password === "string") changed.push("password");
+  }
+
+  if (changed.length === 0) {
+    return NextResponse.json({ ok: true, service });
+  }
+
+  const updated = await prisma.service.update({
+    where: { id: service.id },
+    data,
+    select: { id: true, name: true, url: true, updatedAt: true, createdAt: true },
+  });
+
+  logAction({
+    action: "SERVICE_UPDATE",
+    actor: { kind: "user", userId: access.user.id, email: access.user.email },
+    organizationId: access.project.organizationId,
+    projectId: access.project.id,
+    targetType: "Service",
+    targetId: service.id,
+    metadata: { changedFields: changed },
+    req,
+  });
+
+  return NextResponse.json({ ok: true, service: updated });
+}
+
+export async function DELETE(req: Request, { params }: Params) {
+  const { slug, id } = await params;
+  const access = await requireProjectMember(slug, "EDITOR");
+  if ("error" in access) return access.error;
+
+  const service = await prisma.service.findFirst({
+    where: { id, projectId: access.project.id },
+    select: { id: true, name: true },
+  });
+  if (!service) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  await prisma.service.delete({ where: { id: service.id } });
+
+  logAction({
+    action: "SERVICE_DELETE",
+    actor: { kind: "user", userId: access.user.id, email: access.user.email },
+    organizationId: access.project.organizationId,
+    projectId: access.project.id,
+    targetType: "Service",
+    targetId: service.id,
+    metadata: { name: service.name },
+    req,
+  });
+
+  return NextResponse.json({ ok: true });
+}

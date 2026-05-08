@@ -1,0 +1,283 @@
+import { NextResponse } from "next/server";
+import type { OrgRole } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { isValidEmail, readJson, requireOrgMember } from "@/lib/api";
+import {
+  buildAcceptUrl,
+  generateInvitationToken,
+  hashInvitationToken,
+  INVITATION_TTL_MS,
+} from "@/lib/invitations";
+import { sendInvitationEmail } from "@/lib/email";
+import { logAction } from "@/lib/audit";
+import { getCurrentTenantSlug } from "@/lib/tenant-session";
+import {
+  checkUserQuota,
+  findClientIdBySlug,
+  tenantUserExists,
+} from "@/lib/quotas";
+import { logAdminAction } from "@/lib/admin-audit";
+import { requireFeature } from "@/lib/feature-guard";
+
+type Params = { params: Promise<{ slug: string }> };
+
+const VALID_ROLES: OrgRole[] = ["OWNER", "ADMIN", "DEV", "MEMBER"];
+
+export async function GET(_req: Request, { params }: Params) {
+  const { slug } = await params;
+  const access = await requireOrgMember(slug);
+  if ("error" in access) return access.error;
+
+  const members = await prisma.orgMember.findMany({
+    where: { organizationId: access.organization.id },
+    select: {
+      id: true,
+      role: true,
+      createdAt: true,
+      user: { select: { id: true, email: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const invitations = await prisma.invitation.findMany({
+    where: { organizationId: access.organization.id, acceptedAt: null },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      expiresAt: true,
+      createdAt: true,
+      inviteeUserId: true,
+      invitedBy: { select: { email: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return NextResponse.json({ members, invitations, role: access.role });
+}
+
+export async function POST(req: Request, { params }: Params) {
+  const { slug } = await params;
+  const access = await requireOrgMember(slug, "ADMIN");
+  if ("error" in access) return access.error;
+
+  // Phase 5 — feature gate : inviter d'autres users requiert un plan
+  // payant (FREE = 1 seul user, multi_users non dispo).
+  const tenantSlug = await getCurrentTenantSlug();
+  const featureGate = await requireFeature("multi_users", tenantSlug);
+  if (featureGate) return featureGate;
+
+  // Body : soit { email } (legacy email-based) soit { targetUserId } (in-app
+  // pour un user deja sur la plateforme). Si les 2 sont fournis,
+  // targetUserId prend le pas.
+  const body = (await readJson(req)) as
+    | { email?: string; role?: string; targetUserId?: string }
+    | null;
+  const role = String(body?.role ?? "MEMBER").toUpperCase() as OrgRole;
+  if (!VALID_ROLES.includes(role)) {
+    return NextResponse.json({ error: "Invalid role" }, { status: 400 });
+  }
+  // Only OWNERs can invite OWNERs.
+  if (role === "OWNER" && access.role !== "OWNER") {
+    return NextResponse.json(
+      { error: "Only OWNERs can invite OWNERs" },
+      { status: 403 },
+    );
+  }
+
+  const targetUserId = body?.targetUserId?.trim() || null;
+
+  // ─── Branche in-app ─────────────────────────────────────────────────
+  if (targetUserId) {
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, email: true },
+    });
+    if (!targetUser) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    // Self-invite blocking : on ne peut pas s'auto-inviter.
+    if (targetUser.id === access.user.id) {
+      return NextResponse.json(
+        { error: "Cannot invite yourself" },
+        { status: 400 },
+      );
+    }
+    // Deja membre ?
+    const existingMember = await prisma.orgMember.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: targetUser.id,
+          organizationId: access.organization.id,
+        },
+      },
+    });
+    if (existingMember) {
+      return NextResponse.json(
+        { error: "User is already a member" },
+        { status: 409 },
+      );
+    }
+    // Deja invite (email OU in-app) ? Conflit pour eviter doublon.
+    const existingInv = await prisma.invitation.findFirst({
+      where: {
+        organizationId: access.organization.id,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+        OR: [{ inviteeUserId: targetUser.id }, { email: targetUser.email }],
+      },
+    });
+    if (existingInv) {
+      return NextResponse.json(
+        { error: "Invitation already pending for this user" },
+        { status: 409 },
+      );
+    }
+
+    const token = generateInvitationToken();
+    const tokenHash = hashInvitationToken(token);
+    const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+    const invitation = await prisma.invitation.create({
+      data: {
+        email: targetUser.email,
+        organizationId: access.organization.id,
+        role,
+        tokenHash,
+        expiresAt,
+        invitedById: access.user.id,
+        inviteeUserId: targetUser.id,
+      },
+      select: { id: true, email: true, role: true, expiresAt: true },
+    });
+
+    logAction({
+      action: "MEMBER_INVITE",
+      actor: { kind: "user", userId: access.user.id, email: access.user.email },
+      organizationId: access.organization.id,
+      targetType: "Invitation",
+      targetId: invitation.id,
+      metadata: {
+        email: targetUser.email,
+        role,
+        kind: "in_app",
+        inviteeUserId: targetUser.id,
+      },
+      req,
+    });
+
+    return NextResponse.json({ invitation }, { status: 201 });
+  }
+
+  // ─── Branche email-based (legacy) ──────────────────────────────────
+  const email = String(body?.email ?? "").toLowerCase().trim();
+  if (!isValidEmail(email)) {
+    return NextResponse.json({ error: "Invalid email" }, { status: 400 });
+  }
+
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+  if (existingUser) {
+    const existingMember = await prisma.orgMember.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: existingUser.id,
+          organizationId: access.organization.id,
+        },
+      },
+    });
+    if (existingMember) {
+      return NextResponse.json(
+        { error: "User is already a member" },
+        { status: 409 },
+      );
+    }
+  }
+
+  // Phase 3.4 — quota d'utilisateurs distincts. Appliqué SEULEMENT si
+  // l'invitation va créer un nouveau compte (pas si l'user existe déjà
+  // dans le schéma tenant). En mode legacy (tenantSlug=null), bypass.
+  // Note : `tenantSlug` réutilisé du feature gate plus haut.
+  const inviteeAlreadyInTenant = await tenantUserExists(tenantSlug, email);
+  if (!inviteeAlreadyInTenant) {
+    const quota = await checkUserQuota(tenantSlug);
+    if (!quota.allowed) {
+      await logAdminAction({
+        action: "user.quota_exceeded",
+        clientId: await findClientIdBySlug(tenantSlug),
+        actor: access.user.email,
+        metadata: {
+          tenantSlug,
+          current: quota.current,
+          max: quota.max,
+          invitedEmail: email,
+        },
+      });
+      return NextResponse.json(
+        {
+          error:
+            "Quota d'utilisateurs atteint pour votre plan. Passez à l'offre supérieure pour inviter davantage de membres.",
+        },
+        { status: 403 },
+      );
+    }
+  }
+  // Conflit avec une invitation in-app pour le meme email.
+  const existingInv = await prisma.invitation.findFirst({
+    where: {
+      organizationId: access.organization.id,
+      email,
+      acceptedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  });
+  if (existingInv) {
+    return NextResponse.json(
+      { error: "Invitation already pending for this email" },
+      { status: 409 },
+    );
+  }
+
+  const token = generateInvitationToken();
+  const tokenHash = hashInvitationToken(token);
+  const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+
+  const invitation = await prisma.invitation.create({
+    data: {
+      email,
+      organizationId: access.organization.id,
+      role,
+      tokenHash,
+      expiresAt,
+      invitedById: access.user.id,
+    },
+    select: { id: true, email: true, role: true, expiresAt: true },
+  });
+
+  logAction({
+    action: "MEMBER_INVITE",
+    actor: { kind: "user", userId: access.user.id, email: access.user.email },
+    organizationId: access.organization.id,
+    targetType: "Invitation",
+    targetId: invitation.id,
+    metadata: { email, role, kind: "email" },
+    req,
+  });
+
+  // Side-effect: send the email.
+  try {
+    const inviter = await prisma.user.findUnique({
+      where: { id: access.user.id },
+      select: { email: true },
+    });
+    await sendInvitationEmail({
+      to: email,
+      inviterEmail: inviter?.email ?? "(unknown)",
+      organizationName: access.organization.name,
+      acceptUrl: buildAcceptUrl(token, req),
+      expiresAt,
+    });
+  } catch (err) {
+    console.error("[invitation] email delivery failed:", err);
+  }
+
+  return NextResponse.json({ invitation }, { status: 201 });
+}
