@@ -559,3 +559,118 @@ model SecretRequest {
   @@index([projectId])
   @@index([expiresAt])
 }
+
+// ─── Modèles fusionnés depuis le schéma admin du SaaS ─────────────────
+// En self-host single-tenant, le concept de Client est dégénéré (1 row).
+// Les modèles Subscription/AuditLog sont conservés pour ne pas casser le
+// code, mais sont peu utilisés en self-host.
+
+model Client {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String         @db.VarChar(255)
+  slug             String         @unique @db.VarChar(100)
+  plan             Plan           @default(DEDICATED)
+  maxOrgs          Int            @default(99) @map("max_orgs")
+  maxUsers         Int            @default(999) @map("max_users")
+  status           ClientStatus   @default(ACTIVE)
+  trialEndsAt      DateTime?      @map("trial_ends_at")
+  comped           Boolean        @default(true)
+  compedReason     String?        @map("comped_reason") @db.VarChar(255)
+  stripeCustomerId String?        @map("stripe_customer_id") @db.VarChar(255)
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @default(now()) @map("updated_at")
+  subscriptions   Subscription[]
+  auditLogs       AuditLog[]
+}
+
+model Subscription {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId             String             @map("client_id") @db.Uuid
+  client               Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  plan                 Plan
+  status               SubscriptionStatus
+  stripeSubscriptionId String?            @map("stripe_subscription_id") @db.VarChar(255)
+  currentPeriodStart   DateTime?          @map("current_period_start")
+  currentPeriodEnd     DateTime?          @map("current_period_end")
+  createdAt            DateTime           @default(now()) @map("created_at")
+
+  @@index([clientId])
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId  String?  @map("client_id") @db.Uuid
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  action    String   @db.VarChar(255)
+  actor     String   @db.VarChar(255)
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([clientId, createdAt])
+  @@index([action, createdAt])
+}
+
+enum Plan {
+  FREE
+  SHARED
+  DEDICATED
+}
+
+enum ClientStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  PAST_DUE
+}
+
+model TokenIndex {
+  tokenHash  String    @id @map("token_hash")
+  tenantSlug String    @map("tenant_slug") @db.VarChar(100)
+  kind       TokenKind
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantSlug, kind])
+}
+
+enum TokenKind {
+  MACHINE
+  PLUGIN
+  SHARE
+  SECRET_REQUEST
+}
+
+model PasswordResetToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  tenantSlug String?   @map("tenant_slug") @db.VarChar(100)
+  userId     String    @map("user_id")
+  email      String    @db.VarChar(255)
+  expiresAt  DateTime  @map("expires_at")
+  usedAt     DateTime? @map("used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+model OidcPolicy {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  repo          String
+  workflow      String
+  branch        String
+  tenantSlug    String   @map("tenant_slug") @db.VarChar(100)
+  projectId     String   @map("project_id")
+  environmentId String   @map("environment_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([repo, workflow, branch, tenantSlug, projectId, environmentId])
+  @@index([repo, workflow, branch])
+  @@index([tenantSlug, projectId])
+}

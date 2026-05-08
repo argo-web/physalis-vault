@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "test:integ": "vitest run --config vitest.integ.config.ts",
     "bootstrap-admin": "node scripts/bootstrap-admin.mjs",
-    "prisma:generate": "prisma generate --schema=prisma/tenant-schema.prisma && prisma generate --schema=prisma/schema.prisma"
+    "prisma:generate": "prisma generate --schema=prisma/schema.prisma"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
