@@ -23,6 +23,14 @@ function tenantSlugFromHost(host: string | null): string | null {
   return sub;
 }
 
+/** En prod derrière un reverse proxy, le Host header peut pointer sur
+ *  l'IP interne (ex. nginx → app:3000). On lit d'abord X-Forwarded-Host
+ *  qui est posé par le proxy avec le hostname public, puis fallback Host. */
+function resolveTenantSlug(req: Request): string | null {
+  const forwarded = req.headers.get("x-forwarded-host");
+  return tenantSlugFromHost(forwarded ?? req.headers.get("host"));
+}
+
 /**
  * Register a new user account and accept an invitation in one transaction.
  *
@@ -42,7 +50,7 @@ export async function POST(req: Request, { params }: Params) {
   });
   if (limited) return limited;
 
-  const tenantSlug = tenantSlugFromHost(req.headers.get("host"));
+  const tenantSlug = resolveTenantSlug(req);
   if (!tenantSlug) {
     return NextResponse.json(
       { error: "Invitation must be accepted from the workspace URL." },

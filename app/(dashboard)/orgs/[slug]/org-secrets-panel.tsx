@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import type { OrgRole } from "@prisma/client";
-import { RiKey2Line } from "@remixicon/react";
+import { RiHistoryLine, RiKey2Line } from "@remixicon/react";
+import SecretHistoryDialog from "@/components/SecretHistoryDialog";
 
 type SecretListItem = { key: string; updatedAt: string };
 
@@ -32,6 +33,7 @@ export default function OrgSecretsPanel({
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
   const [editKey, setEditKey] = useState<string | null>(null);
+  const [historyKey, setHistoryKey] = useState<string | null>(null);
 
   // DEV+ peut lire (list + reveal). ADMIN+ peut créer/modifier/supprimer.
   const canRead = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.DEV;
@@ -219,6 +221,14 @@ export default function OrgSecretsPanel({
                     <>
                       <button
                         type="button"
+                        onClick={() => setHistoryKey(s.key)}
+                        className="btn btn-ghost btn-xs"
+                        title="Voir l'historique des versions"
+                      >
+                        <RiHistoryLine size={12} aria-hidden /> Historique
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setEditKey(s.key)}
                         className="btn btn-ghost btn-xs"
                       >
@@ -238,6 +248,18 @@ export default function OrgSecretsPanel({
             ),
           )}
         </div>
+      )}
+
+      {historyKey && (
+        <SecretHistoryDialog
+          apiBaseUrl={`/api/orgs/${slug}/secrets/${encodeURIComponent(historyKey)}/versions`}
+          secretKey={historyKey}
+          onClose={() => setHistoryKey(null)}
+          onRestored={() => {
+            setRevealed({});
+            reload();
+          }}
+        />
       )}
     </div>
   );

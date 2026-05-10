@@ -7,6 +7,7 @@ import OrgMembersPanel from "./members-panel";
 import OrgSecretsPanel from "./org-secrets-panel";
 import ServersPanel from "./servers-panel";
 import OrgSettingsDialog from "./org-settings-dialog";
+import OrgTokensPanel from "./org-tokens-panel";
 import TeamVaultPanel from "../../team-vault-panel";
 
 const ORG_ROLE_RANK: Record<OrgRole, number> = {
@@ -16,7 +17,7 @@ const ORG_ROLE_RANK: Record<OrgRole, number> = {
   OWNER: 4,
 };
 
-type Tab = "members" | "secrets" | "servers" | "vault";
+type Tab = "members" | "secrets" | "servers" | "vault" | "tokens";
 
 export default function OrgPanels({
   slug,
@@ -74,6 +75,16 @@ export default function OrgPanels({
           >
             Membres
           </button>
+          {canRead && (
+            <button
+              type="button"
+              className={`tab ${tab === "tokens" ? "active" : ""}`}
+              onClick={() => setTab("tokens")}
+              title="Tokens d'intégration (N8n, Make, scripts)"
+            >
+              Tokens
+            </button>
+          )}
         </div>
         {canManage && (
           <button
@@ -95,6 +106,8 @@ export default function OrgPanels({
         <OrgSecretsPanel slug={slug} role={role} />
       ) : tab === "servers" ? (
         <ServersPanel slug={slug} role={role} />
+      ) : tab === "tokens" && canRead ? (
+        <OrgTokensPanel slug={slug} />
       ) : (
         <TeamVaultPanel scope={{ kind: "org", orgSlug: slug }} />
       )}

@@ -6,6 +6,7 @@ import { decrypt } from "@/lib/crypto";
 import { readJson, requireEnvironment } from "@/lib/api";
 import { isValidCategory } from "@/lib/categories";
 import { logAction } from "@/lib/audit";
+import { normalizeTags, TAG_VALIDATION_ERROR } from "@/lib/tags";
 
 type Params = { params: Promise<{ slug: string; env: string; key: string }> };
 
@@ -56,47 +57,75 @@ export async function PATCH(req: Request, { params }: Params) {
   if ("error" in access) return access.error;
 
   const body = (await readJson(req)) as
-    | { category?: string | null }
+    | { category?: string | null; tags?: string[] }
     | null;
-  if (!body || !("category" in body)) {
+  if (!body || (!("category" in body) && !("tags" in body))) {
     return NextResponse.json(
-      { error: "category is required (string from the allowed list, or null)" },
+      { error: "category or tags is required" },
       { status: 400 },
     );
-  }
-
-  let category: string | null = null;
-  if (body.category !== null && body.category !== "" && body.category !== undefined) {
-    if (!isValidCategory(body.category)) {
-      return NextResponse.json(
-        { error: "Invalid category" },
-        { status: 400 },
-      );
-    }
-    category = body.category;
   }
 
   const existing = await prisma.secret.findUnique({
     where: {
       environmentId_key: { environmentId: access.environment.id, key },
     },
-    select: { id: true, key: true, category: true },
+    select: { id: true, key: true, category: true, tags: true },
   });
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (existing.category === category) {
+  const data: { category?: string | null; tags?: string[] } = {};
+  const changed: string[] = [];
+
+  if ("category" in body) {
+    let category: string | null = null;
+    if (body.category !== null && body.category !== "" && body.category !== undefined) {
+      if (!isValidCategory(body.category)) {
+        return NextResponse.json(
+          { error: "Invalid category" },
+          { status: 400 },
+        );
+      }
+      category = body.category;
+    }
+    if (existing.category !== category) {
+      data.category = category;
+      changed.push("category");
+    }
+  }
+
+  if ("tags" in body) {
+    const tags = normalizeTags(body.tags);
+    if (tags === null) {
+      return NextResponse.json({ error: TAG_VALIDATION_ERROR }, { status: 400 });
+    }
+    // Compare arrays naïf : ordres + contenu identiques ?
+    const sameTags =
+      existing.tags.length === tags.length &&
+      existing.tags.every((t, i) => t === tags[i]);
+    if (!sameTags) {
+      data.tags = tags;
+      changed.push("tags");
+    }
+  }
+
+  if (changed.length === 0) {
     // No-op : pas de write, pas d'audit log inutile.
     return NextResponse.json({
-      secret: { key: existing.key, category: existing.category },
+      secret: {
+        key: existing.key,
+        category: existing.category,
+        tags: existing.tags,
+      },
     });
   }
 
   const updated = await prisma.secret.update({
     where: { id: existing.id },
-    data: { category },
-    select: { key: true, category: true, updatedAt: true },
+    data,
+    select: { key: true, category: true, tags: true, updatedAt: true },
   });
 
   logAction({
@@ -108,11 +137,7 @@ export async function PATCH(req: Request, { params }: Params) {
     targetType: "Secret",
     targetId: existing.id,
     secretKey: existing.key,
-    metadata: {
-      changedFields: ["category"],
-      from: existing.category,
-      to: category,
-    },
+    metadata: { changedFields: changed },
     req,
   });
 

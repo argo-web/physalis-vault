@@ -7,6 +7,21 @@ export const ADMIN_EMAIL = process.env.TEST_ADMIN_EMAIL ?? "admin@artpotentiel.f
 export const ADMIN_PASSWORD =
   process.env.TEST_ADMIN_PASSWORD ?? "admin-test-password-123";
 
+/** Slug du tenant utilisé pour les tests d'intégration. Pré-requis :
+ *  un client de ce slug doit exister dans `admin.clients`, et l'admin
+ *  user (admin@artpotentiel.fr / ADMIN_PASSWORD) doit exister dans
+ *  `client_<slug>.User`. Cf. docs/plan-tests.md pour le setup. */
+export const TENANT_SLUG = process.env.TEST_TENANT_SLUG ?? "test";
+
+/** Nom du schéma Postgres tenant pour les INSERTs SQL directs. */
+export const TENANT_SCHEMA = `client_${TENANT_SLUG}`;
+
+/** Hostname tenant simulé via X-Forwarded-Host, lu par le serveur en
+ *  fallback du Host (qui est en local `localhost:3001`, non-tenant). */
+export const TENANT_DOMAIN =
+  process.env.PHYSALIS_TENANT_DOMAIN ?? "physalis.cloud";
+export const TENANT_HOST = `${TENANT_SLUG}.${TENANT_DOMAIN}`;
+
 /**
  * Petit "browser" pour les tests : maintient une jar de cookies entre
  * requêtes, ajoute le header Cookie automatiquement.
@@ -71,11 +86,15 @@ export class Session {
  * Login NextAuth Credentials. Retourne la session avec cookie de session.
  * `fakeIp` permet de forcer l'IP simulée (utile pour le test rate-limit qui
  * a besoin d'un bucket dédié).
+ * `tenantSlug` permet de logger contre un tenant précis (sinon path
+ * SUPERADMIN/legacy = pas de contexte tenant côté DB → throw sur les
+ * routes tenant-scopées). Default : `TENANT_SLUG` (= "test").
  */
 export async function loginAs(
   email: string,
   password: string,
   fakeIp?: string,
+  tenantSlug: string | null = TENANT_SLUG,
 ): Promise<Session> {
   const session = new Session(fakeIp);
   // 1. GET /api/auth/csrf — récupère le csrfToken et set le cookie csrf.
@@ -86,7 +105,9 @@ export async function loginAs(
   const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
 
   // 2. POST /api/auth/callback/credentials avec csrfToken + creds.
-  const body = new URLSearchParams({ csrfToken, email, password }).toString();
+  const params: Record<string, string> = { csrfToken, email, password };
+  if (tenantSlug) params.tenantSlug = tenantSlug;
+  const body = new URLSearchParams(params).toString();
   const loginRes = await session.fetch("/api/auth/callback/credentials", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -94,15 +115,24 @@ export async function loginAs(
   });
   if (loginRes.status !== 302) {
     throw new Error(
-      `login expected 302, got ${loginRes.status} (creds: ${email})`,
+      `login expected 302, got ${loginRes.status} (creds: ${email}, tenant: ${tenantSlug ?? "none"})`,
     );
   }
   return session;
 }
 
+/** Session admin avec contexte tenant. En self-host single-tenant cette
+ *  session a accès à toutes les routes tenant-aware. */
 export async function adminSession(fakeIp?: string): Promise<Session> {
-  return loginAs(ADMIN_EMAIL, ADMIN_PASSWORD, fakeIp);
+  return loginAs(ADMIN_EMAIL, ADMIN_PASSWORD, fakeIp, TENANT_SLUG);
 }
+
+/** Header X-Forwarded-Host pour simuler une requête derrière un reverse
+ *  proxy avec le bon hostname tenant. À utiliser sur les routes qui font
+ *  `tenantSlugFromHost(req.headers.get("host"))`. */
+export const TENANT_FORWARDED_HEADER = {
+  "x-forwarded-host": TENANT_HOST,
+} as const;
 
 /**
  * Helper : POST JSON avec gestion des erreurs.

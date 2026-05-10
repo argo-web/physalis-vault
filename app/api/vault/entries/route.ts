@@ -42,14 +42,31 @@ export async function GET(req: Request) {
   const tag = url.searchParams.get("tag");
   const favoriteOnly = url.searchParams.get("favorite") === "true";
   const search = url.searchParams.get("search")?.trim().toLowerCase() ?? "";
+  // collectionId : "none" → entries sans collection (NULL en DB)
+  //                "<id>" → entries de cette collection (vérif owner via where userId)
+  //                absent → toutes les entries
+  const collectionParam = url.searchParams.get("collectionId");
 
   const where: {
     userId: string;
     favorite?: boolean;
     tags?: { has: string };
+    collectionId?: string | null;
   } = { userId: user.id };
   if (favoriteOnly) where.favorite = true;
   if (tag) where.tags = { has: tag };
+  if (collectionParam === "none") where.collectionId = null;
+  else if (collectionParam) where.collectionId = collectionParam;
+
+  // sort : "name" (défaut, favoris en haut puis A→Z), "recent" (récents
+  // d'abord), "favorite_first" (favoris en haut puis récents).
+  const sort = url.searchParams.get("sort") ?? "name";
+  const orderBy =
+    sort === "recent"
+      ? [{ updatedAt: "desc" as const }]
+      : sort === "favorite_first"
+        ? [{ favorite: "desc" as const }, { updatedAt: "desc" as const }]
+        : [{ favorite: "desc" as const }, { name: "asc" as const }];
 
   const entries = await prisma.vaultEntry.findMany({
     where,
@@ -61,10 +78,11 @@ export async function GET(req: Request) {
       tags: true,
       favorite: true,
       encryptedTotpSecret: true,
+      collectionId: true,
       createdAt: true,
       updatedAt: true,
     },
-    orderBy: [{ favorite: "desc" }, { name: "asc" }],
+    orderBy,
   });
 
   // Recherche full-text simple cote app (volume faible : coffre perso < 500 entrees).
@@ -102,6 +120,7 @@ export async function POST(req: Request) {
         totpSecret?: string | null;
         tags?: string[];
         favorite?: boolean;
+        collectionId?: string | null;
       }
     | null;
   if (!body || typeof body.name !== "string") {
@@ -137,6 +156,22 @@ export async function POST(req: Request) {
     );
   }
   const favorite = body.favorite === true;
+
+  // Collection optionnelle. On vérifie qu'elle appartient bien à l'user.
+  let collectionId: string | null = null;
+  if (typeof body.collectionId === "string" && body.collectionId.length > 0) {
+    const col = await prisma.vaultCollection.findFirst({
+      where: { id: body.collectionId, userId: user.id },
+      select: { id: true },
+    });
+    if (!col) {
+      return NextResponse.json(
+        { error: "collectionId not found" },
+        { status: 400 },
+      );
+    }
+    collectionId = col.id;
+  }
 
   let encryptedPassword: string | null = null;
   let passwordIv: string | null = null;
@@ -180,6 +215,7 @@ export async function POST(req: Request) {
   const entry = await prisma.vaultEntry.create({
     data: {
       userId: user.id,
+      collectionId,
       name,
       url,
       username,
@@ -199,6 +235,7 @@ export async function POST(req: Request) {
       username: true,
       tags: true,
       favorite: true,
+      collectionId: true,
       createdAt: true,
       updatedAt: true,
     },

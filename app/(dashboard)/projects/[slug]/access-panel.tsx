@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { ProjectRole } from "@prisma/client";
+import TagsInput from "@/components/TagsInput";
 
 const ROLE_RANK: Record<ProjectRole, number> = {
   VIEWER: 1,
@@ -30,12 +31,14 @@ type ServiceListItem = {
   id: string;
   name: string;
   url: string | null;
+  tags: string[];
   updatedAt: string;
 };
 
 type AccountListItem = {
   id: string;
   name: string;
+  tags: string[];
   updatedAt: string;
 };
 
@@ -175,6 +178,13 @@ function ServicesSection({
 
   const isEmpty = items !== null && items.length === 0;
 
+  const allTags = useMemo<string[]>(() => {
+    if (!items) return [];
+    const set = new Set<string>();
+    for (const s of items) for (const t of s.tags) set.add(t);
+    return Array.from(set).sort();
+  }, [items]);
+
   return (
     <section>
       <div className="section-header">
@@ -202,6 +212,7 @@ function ServicesSection({
         <div className="create-card">
           <ServiceForm
             slug={slug}
+            allTags={allTags}
             onCancel={() => setAdding(false)}
             onSaved={() => {
               setAdding(false);
@@ -225,6 +236,8 @@ function ServicesSection({
                   initialId={s.id}
                   initialName={s.name}
                   initialUrl={s.url}
+                  initialTags={s.tags}
+                  allTags={allTags}
                   onCancel={() => setEditId(null)}
                   onSaved={() => {
                     setEditId(null);
@@ -260,6 +273,8 @@ function ServiceForm({
   initialId,
   initialName,
   initialUrl,
+  initialTags,
+  allTags,
   onCancel,
   onSaved,
 }: {
@@ -267,6 +282,8 @@ function ServiceForm({
   initialId?: string;
   initialName?: string;
   initialUrl?: string | null;
+  initialTags?: string[];
+  allTags?: string[];
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -275,6 +292,7 @@ function ServiceForm({
   const [url, setUrl] = useState(initialUrl ?? "");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [tags, setTags] = useState<string[]>(initialTags ?? []);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -282,7 +300,7 @@ function ServiceForm({
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const body: Record<string, string | undefined> = { name };
+      const body: Record<string, unknown> = { name, tags };
       if (url.trim()) body.url = url.trim();
       if (!isEdit || user) body.user = user;
       if (!isEdit || password) body.password = password;
@@ -359,6 +377,15 @@ function ServiceForm({
             className="input input-mono"
           />
         </div>
+      </div>
+      <div className="field" style={{ marginTop: 8 }}>
+        <label>
+          Tags techniques{" "}
+          <span className="text-muted" style={{ fontSize: 11 }}>
+            (pour les intégrations N8n / Make)
+          </span>
+        </label>
+        <TagsInput value={tags} onChange={setTags} suggestions={allTags ?? []} />
       </div>
       {error && (
         <p className="error-text" style={{ marginTop: 8 }}>
@@ -452,6 +479,13 @@ function AccountsSection({
 
   const isEmpty = items !== null && items.length === 0;
 
+  const allTags = useMemo<string[]>(() => {
+    if (!items) return [];
+    const set = new Set<string>();
+    for (const a of items) for (const t of a.tags) set.add(t);
+    return Array.from(set).sort();
+  }, [items]);
+
   return (
     <section>
       <div className="section-header">
@@ -479,6 +513,7 @@ function AccountsSection({
         <div className="create-card">
           <AccountForm
             slug={slug}
+            allTags={allTags}
             onCancel={() => setAdding(false)}
             onSaved={() => {
               setAdding(false);
@@ -500,6 +535,8 @@ function AccountsSection({
                 <AccountForm
                   slug={slug}
                   initialId={a.id}
+                  initialTags={a.tags}
+                  allTags={allTags}
                   initialName={a.name}
                   onCancel={() => setEditId(null)}
                   onSaved={() => {
@@ -535,12 +572,16 @@ function AccountForm({
   slug,
   initialId,
   initialName,
+  initialTags,
+  allTags,
   onCancel,
   onSaved,
 }: {
   slug: string;
   initialId?: string;
   initialName?: string;
+  initialTags?: string[];
+  allTags?: string[];
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -548,6 +589,7 @@ function AccountForm({
   const [name, setName] = useState(initialName ?? "");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [tags, setTags] = useState<string[]>(initialTags ?? []);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -555,7 +597,7 @@ function AccountForm({
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const body: Record<string, string | undefined> = { name };
+      const body: Record<string, unknown> = { name, tags };
       if (!isEdit || user) body.user = user;
       if (!isEdit || password) body.password = password;
 
@@ -620,6 +662,15 @@ function AccountForm({
             className="input input-mono"
           />
         </div>
+      </div>
+      <div className="field" style={{ marginTop: 8 }}>
+        <label>
+          Tags techniques{" "}
+          <span className="text-muted" style={{ fontSize: 11 }}>
+            (pour les intégrations N8n / Make)
+          </span>
+        </label>
+        <TagsInput value={tags} onChange={setTags} suggestions={allTags ?? []} />
       </div>
       {error && (
         <p className="error-text" style={{ marginTop: 8 }}>

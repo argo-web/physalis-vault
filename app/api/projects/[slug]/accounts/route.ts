@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { readJson, requireProjectMember } from "@/lib/api";
 import { logAction } from "@/lib/audit";
+import { normalizeTags, TAG_VALIDATION_ERROR } from "@/lib/tags";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -13,7 +14,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   const accounts = await prisma.appAccount.findMany({
     where: { projectId: access.project.id },
-    select: { id: true, name: true, updatedAt: true, createdAt: true },
+    select: { id: true, name: true, tags: true, updatedAt: true, createdAt: true },
     orderBy: { name: "asc" },
   });
 
@@ -26,7 +27,7 @@ export async function POST(req: Request, { params }: Params) {
   if ("error" in access) return access.error;
 
   const body = (await readJson(req)) as
-    | { name?: string; user?: string; password?: string }
+    | { name?: string; user?: string; password?: string; tags?: string[] }
     | null;
   const name = String(body?.name ?? "").trim();
   if (!name) {
@@ -34,6 +35,10 @@ export async function POST(req: Request, { params }: Params) {
   }
   const user = String(body?.user ?? "");
   const password = String(body?.password ?? "");
+  const tags = normalizeTags(body?.tags);
+  if (tags === null) {
+    return NextResponse.json({ error: TAG_VALIDATION_ERROR }, { status: 400 });
+  }
 
   const payload = encrypt(JSON.stringify({ user, password }));
 
@@ -43,9 +48,10 @@ export async function POST(req: Request, { params }: Params) {
       encryptedData: payload.encryptedValue,
       iv: payload.iv,
       tag: payload.tag,
+      tags,
       projectId: access.project.id,
     },
-    select: { id: true, name: true, createdAt: true, updatedAt: true },
+    select: { id: true, name: true, tags: true, createdAt: true, updatedAt: true },
   });
 
   logAction({

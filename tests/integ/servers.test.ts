@@ -5,6 +5,7 @@ import {
   postJson,
   patchJson,
   deleteReq,
+  TENANT_SCHEMA,
 } from "./helpers/api";
 import { execSql, selectRows } from "./helpers/db";
 
@@ -41,7 +42,7 @@ afterAll(async () => {
   }
   // Sécurité : retire tout serveur de test résiduel par nom.
   await execSql(
-    `DELETE FROM "Server" WHERE name LIKE 'srv-test-${SUFFIX}%'`,
+    `DELETE FROM "${TENANT_SCHEMA}"."Server" WHERE name LIKE 'srv-test-${SUFFIX}%'`,
   ).catch(() => {});
 });
 
@@ -66,7 +67,7 @@ describe("Server CRUD — admin org", () => {
 
     // Vérification DB : la clé en base est chiffrée (base64), pas le plaintext.
     const rows = await selectRows(
-      `SELECT "encryptedKey", iv, tag FROM "Server" WHERE id = '${createdServerId}'`,
+      `SELECT "encryptedKey", iv, tag FROM "${TENANT_SCHEMA}"."Server" WHERE id = '${createdServerId}'`,
     );
     expect(rows.length).toBe(1);
     const [encryptedKey, iv, tag] = rows[0]!.split("|");
@@ -139,7 +140,7 @@ describe("Server CRUD — admin org", () => {
 
     // Sanity DB : la cle reste celle initialement stockée.
     const stillEncrypted = await execSql(
-      `SELECT "encryptedKey" FROM "Server" WHERE id = '${createdServerId}'`,
+      `SELECT "encryptedKey" FROM "${TENANT_SCHEMA}"."Server" WHERE id = '${createdServerId}'`,
     );
     expect(stillEncrypted).not.toContain("FAKE_KEY_MARKER");
     expect(stillEncrypted).toMatch(/^[A-Za-z0-9+/=]+$/);
@@ -149,7 +150,7 @@ describe("Server CRUD — admin org", () => {
     // Le PATCH ne supporte pas la rotation, donc une clé fournie est ignorée.
     // On vérifie qu'aucun champ chiffré n'a changé.
     const before = await execSql(
-      `SELECT "encryptedKey" FROM "Server" WHERE id = '${createdServerId}'`,
+      `SELECT "encryptedKey" FROM "${TENANT_SCHEMA}"."Server" WHERE id = '${createdServerId}'`,
     );
     const res = await patchJson(
       admin,
@@ -158,7 +159,7 @@ describe("Server CRUD — admin org", () => {
     );
     expect(res.status).toBe(200);
     const after = await execSql(
-      `SELECT "encryptedKey" FROM "Server" WHERE id = '${createdServerId}'`,
+      `SELECT "encryptedKey" FROM "${TENANT_SCHEMA}"."Server" WHERE id = '${createdServerId}'`,
     );
     expect(after).toBe(before);
   });

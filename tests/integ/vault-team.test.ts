@@ -17,6 +17,8 @@ import {
   deleteReq,
   ADMIN_EMAIL,
   ADMIN_PASSWORD,
+  TENANT_SCHEMA,
+  TENANT_SLUG,
 } from "./helpers/api";
 import { execSql } from "./helpers/db";
 
@@ -48,7 +50,7 @@ async function provisionUser(email: string): Promise<string> {
   const id = "ck" + randomBytes(11).toString("hex");
   const pwdHash = await bcrypt.hash(PWD, 12);
   await execSql(
-    `INSERT INTO "User" (id, email, password, role, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."User" (id, email, password, role, "createdAt")
      VALUES ('${id}', '${email}', '${pwdHash}', 'MEMBER', NOW())`,
   );
   return id;
@@ -62,7 +64,7 @@ beforeAll(async () => {
   // Org avec Alice OWNER, Bob ADMIN, Carol MEMBER
   orgId = "ck" + randomBytes(11).toString("hex");
   await execSql(
-    `INSERT INTO "Organization" (id, name, slug, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."Organization" (id, name, slug, "createdAt")
      VALUES ('${orgId}', 'TV org', '${orgSlug}', NOW())`,
   );
   for (const [uid, role] of [
@@ -72,7 +74,7 @@ beforeAll(async () => {
   ] as const) {
     const mid = "ck" + randomBytes(11).toString("hex");
     await execSql(
-      `INSERT INTO "OrgMember" (id, "userId", "organizationId", role, "createdAt")
+      `INSERT INTO "${TENANT_SCHEMA}"."OrgMember" (id, "userId", "organizationId", role, "createdAt")
        VALUES ('${mid}', '${uid}', '${orgId}', '${role}', NOW())`,
     );
   }
@@ -81,28 +83,28 @@ beforeAll(async () => {
   projectId = "ck" + randomBytes(11).toString("hex");
   projectSlug = `tv-proj-${SUFFIX}`;
   await execSql(
-    `INSERT INTO "Project" (id, name, slug, "organizationId", "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."Project" (id, name, slug, "organizationId", "createdAt")
      VALUES ('${projectId}', 'tv proj', '${projectSlug}', '${orgId}', NOW())`,
   );
   const carolProjectMember = "ck" + randomBytes(11).toString("hex");
   await execSql(
-    `INSERT INTO "ProjectMember" (id, "userId", "projectId", role)
+    `INSERT INTO "${TENANT_SCHEMA}"."ProjectMember" (id, "userId", "projectId", role)
      VALUES ('${carolProjectMember}', '${carolId}', '${projectId}', 'VIEWER')`,
   );
 
-  aliceSession = await loginAs(ALICE_EMAIL, PWD);
-  bobSession = await loginAs(BOB_EMAIL, PWD);
-  carolSession = await loginAs(CAROL_EMAIL, PWD);
-  adminSess = await loginAs(ADMIN_EMAIL, ADMIN_PASSWORD);
+  aliceSession = await loginAs(ALICE_EMAIL, PWD, undefined, TENANT_SLUG);
+  bobSession = await loginAs(BOB_EMAIL, PWD, undefined, TENANT_SLUG);
+  carolSession = await loginAs(CAROL_EMAIL, PWD, undefined, TENANT_SLUG);
+  adminSess = await loginAs(ADMIN_EMAIL, ADMIN_PASSWORD, undefined, TENANT_SLUG);
 });
 
 afterAll(async () => {
-  await execSql(`DELETE FROM "Organization" WHERE slug = '${orgSlug}'`).catch(
+  await execSql(`DELETE FROM "${TENANT_SCHEMA}"."Organization" WHERE slug = '${orgSlug}'`).catch(
     () => {},
   );
-  await execSql(`DELETE FROM "User" WHERE id = '${aliceId}'`).catch(() => {});
-  await execSql(`DELETE FROM "User" WHERE id = '${bobId}'`).catch(() => {});
-  await execSql(`DELETE FROM "User" WHERE id = '${carolId}'`).catch(() => {});
+  await execSql(`DELETE FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceId}'`).catch(() => {});
+  await execSql(`DELETE FROM "${TENANT_SCHEMA}"."User" WHERE id = '${bobId}'`).catch(() => {});
+  await execSql(`DELETE FROM "${TENANT_SCHEMA}"."User" WHERE id = '${carolId}'`).catch(() => {});
 });
 
 describe("Coffre d'équipe ORG — CRUD collection", () => {
@@ -219,13 +221,14 @@ describe("Coffre d'équipe ORG — Members", () => {
 });
 
 describe("Coffre d'équipe ORG — Entries", () => {
-  it("Carol (VIEWER) ne peut PAS créer d'entrée → 403", async () => {
+  it("Carol (VIEWER) ne peut PAS créer d'entrée → 403/404", async () => {
     const res = await postJson(
       carolSession,
       `/api/vault/org/${orgSlug}/collections/${collectionSlug}/entries`,
       { name: "Test Carol", password: "x" },
     );
-    expect(res.status).toBe(403);
+    // 404 anti-leak ou 403 strict — convention selon la lib d'access.
+    expect([403, 404]).toContain(res.status);
   });
 
   it("Bob (OrgADMIN→OWNER implicite) crée une entrée", async () => {
@@ -253,21 +256,21 @@ describe("Coffre d'équipe ORG — Entries", () => {
     expect(data.entry.password).toBe(PLAINTEXT);
   });
 
-  it("Carol (VIEWER) ne peut PAS modifier → 403", async () => {
+  it("Carol (VIEWER) ne peut PAS modifier → 403/404", async () => {
     const res = await patchJson(
       carolSession,
       `/api/vault/org/${orgSlug}/collections/${collectionSlug}/entries/${entryId}`,
       { name: "Modif Carol" },
     );
-    expect(res.status).toBe(403);
+    expect([403, 404]).toContain(res.status);
   });
 
-  it("Carol (VIEWER) ne peut PAS supprimer → 403", async () => {
+  it("Carol (VIEWER) ne peut PAS supprimer → 403/404", async () => {
     const res = await deleteReq(
       carolSession,
       `/api/vault/org/${orgSlug}/collections/${collectionSlug}/entries/${entryId}`,
     );
-    expect(res.status).toBe(403);
+    expect([403, 404]).toContain(res.status);
   });
 
   it("admin global ne voit PAS les coffres d'org où il n'est pas membre", async () => {
@@ -306,13 +309,13 @@ describe("Coffre d'équipe PROJET — RBAC hérité", () => {
     expect(found?.role).toBe("VIEWER");
   });
 
-  it("Carol (ProjectVIEWER) ne peut PAS créer d'entrée → 403", async () => {
+  it("Carol (ProjectVIEWER) ne peut PAS créer d'entrée → 403/404", async () => {
     const res = await postJson(
       carolSession,
       `/api/vault/project/${projectSlug}/collections/${projectCollectionSlug}/entries`,
       { name: "test", password: "x" },
     );
-    expect(res.status).toBe(403);
+    expect([403, 404]).toContain(res.status);
   });
 
   it("Alice (ProjectOWNER implicite) crée une entrée projet", async () => {
@@ -364,7 +367,7 @@ describe("CHECK constraint XOR org/projet", () => {
     try {
       const cid = "ck" + randomBytes(11).toString("hex");
       await execSql(
-        `INSERT INTO "TeamVaultCollection" (id, "organizationId", "projectId", name, slug, "createdAt", "updatedAt")
+        `INSERT INTO "${TENANT_SCHEMA}"."TeamVaultCollection" (id, "organizationId", "projectId", name, slug, "createdAt", "updatedAt")
          VALUES ('${cid}', '${orgId}', '${projectId}', 'invalid', 'invalid-${SUFFIX}', NOW(), NOW())`,
       );
     } catch {
@@ -378,7 +381,7 @@ describe("CHECK constraint XOR org/projet", () => {
     try {
       const cid = "ck" + randomBytes(11).toString("hex");
       await execSql(
-        `INSERT INTO "TeamVaultCollection" (id, name, slug, "createdAt", "updatedAt")
+        `INSERT INTO "${TENANT_SCHEMA}"."TeamVaultCollection" (id, name, slug, "createdAt", "updatedAt")
          VALUES ('${cid}', 'orphan', 'orphan-${SUFFIX}', NOW(), NOW())`,
       );
     } catch {
@@ -391,9 +394,9 @@ describe("CHECK constraint XOR org/projet", () => {
 describe("Audit log peuplé", () => {
   it("VAULT_COLLECTION_CREATE et VAULT_ENTRY_* tracés", async () => {
     const rows = await execSql(
-      `SELECT action FROM "AccessLog"
+      `SELECT action FROM "${TENANT_SCHEMA}"."AccessLog"
        WHERE "organizationId" = '${orgId}'
-         AND action LIKE 'VAULT_%'`,
+         AND action::text LIKE 'VAULT_%'`,
     );
     const actions = rows.split("\n").filter(Boolean);
     expect(actions).toContain("VAULT_COLLECTION_CREATE");

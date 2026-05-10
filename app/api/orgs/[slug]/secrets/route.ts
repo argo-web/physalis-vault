@@ -7,6 +7,7 @@ import {
   requireOrgMember,
 } from "@/lib/api";
 import { logAction } from "@/lib/audit";
+import { createOrgSecretVersion } from "@/lib/versioning";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -48,25 +49,42 @@ export async function POST(req: Request, { params }: Params) {
     );
   }
 
+  // Lit la valeur ACTUELLE (encryptedValue/iv/tag) pour snapshot avant
+  // l'écrasement. CREATE simple si pas existant (pas d'historique sur
+  // la valeur initiale).
   const existing = await prisma.orgSecret.findUnique({
     where: {
       organizationId_key: { organizationId: access.organization.id, key },
     },
-    select: { id: true },
+    select: { id: true, encryptedValue: true, iv: true, tag: true },
   });
 
   const payload = encrypt(body.value);
-  const secret = await prisma.orgSecret.upsert({
-    where: {
-      organizationId_key: { organizationId: access.organization.id, key },
-    },
-    create: {
-      key,
-      organizationId: access.organization.id,
-      ...payload,
-    },
-    update: payload,
-    select: { id: true, key: true, updatedAt: true, createdAt: true },
+
+  // Transaction : snapshot ancien (si existant) + upsert nouveau, atomique.
+  const secret = await prisma.$transaction(async (tx) => {
+    if (existing) {
+      await createOrgSecretVersion({
+        tx,
+        orgSecretId: existing.id,
+        encryptedValue: existing.encryptedValue,
+        iv: existing.iv,
+        tag: existing.tag,
+        createdById: access.user.id,
+      });
+    }
+    return tx.orgSecret.upsert({
+      where: {
+        organizationId_key: { organizationId: access.organization.id, key },
+      },
+      create: {
+        key,
+        organizationId: access.organization.id,
+        ...payload,
+      },
+      update: payload,
+      select: { id: true, key: true, updatedAt: true, createdAt: true },
+    });
   });
 
   logAction({

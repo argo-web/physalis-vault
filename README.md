@@ -1,4 +1,4 @@
-> **⚠️ Pré-release — version 0.0.2**
+> **⚠️ Pré-release — version 0.0.3**
 >
 > Ce repo de self-host est en **cours de test** et n'a pas encore été
 > validé en production. L'API, le schéma de base de données et le flux

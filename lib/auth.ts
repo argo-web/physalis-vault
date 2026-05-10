@@ -21,6 +21,24 @@ class TwoFactorInvalid extends CredentialsSignin {
   code = "2fa_invalid";
 }
 
+/**
+ * Hash bcrypt fictif calculé une fois au chargement. Sert à exécuter un
+ * `bcrypt.compare()` factice dans les chemins de rejet rapide (user
+ * inconnu, tenant introuvable, rôle insuffisant) afin que la latence de
+ * réponse ne révèle pas l'existence d'un compte. bcrypt domine le coût
+ * (~100ms) — sans ce compare factice, un attaquant distingue
+ * "email inconnu" (<50ms) de "email connu mauvais mdp" (~150ms).
+ */
+const DUMMY_BCRYPT_HASH = bcrypt.hashSync(
+  "dummy-anti-timing-attack-payload",
+  10,
+);
+
+async function rejectWithConstantTime(password: string): Promise<null> {
+  await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
+  return null;
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
   providers: [
@@ -77,7 +95,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               metadata: { reason: "tenant_not_found", email, tenantSlug },
               req,
             });
-            return null;
+            return rejectWithConstantTime(password);
           }
           if (
             client.status === "SUSPENDED" ||
@@ -94,7 +112,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               },
               req,
             });
-            return null;
+            return rejectWithConstantTime(password);
           }
         }
 
@@ -128,7 +146,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 req,
                 tenantSlug,
               });
-              return null;
+              return rejectWithConstantTime(password);
             }
 
             const ok = await bcrypt.compare(password, user.password);
@@ -262,7 +280,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             metadata: { reason: "user_not_found", email, tenantSlug: null },
             req,
           });
-          return null;
+          return rejectWithConstantTime(password);
         }
 
         if (!isSuperadmin(user.role)) {
@@ -272,7 +290,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             metadata: { reason: "tenant_required_for_non_superadmin", email },
             req,
           });
-          return null;
+          return rejectWithConstantTime(password);
         }
 
         const ok = await bcrypt.compare(password, user.password);

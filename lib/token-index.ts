@@ -3,7 +3,13 @@
 // tenant correspondante (MachineToken, PluginToken, OneTimeShare).
 // Signatures alignées sur le source SaaS.
 
-export type TokenKind = "MACHINE" | "PLUGIN" | "SHARE" | "SECRET_REQUEST";
+export type TokenKind =
+  | "MACHINE"
+  | "PLUGIN"
+  | "SHARE"
+  | "SECRET_REQUEST"
+  | "USER"
+  | "ORG";
 
 export type TokenIndexEntry = {
   tokenHash: string;

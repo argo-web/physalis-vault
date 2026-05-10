@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { Session, adminSession, postJson, deleteReq } from "./helpers/api";
+import {
+  Session,
+  adminSession,
+  postJson,
+  deleteReq,
+  TENANT_SCHEMA,
+} from "./helpers/api";
 import { execSql, selectRows } from "./helpers/db";
 
 const PROJECT_NAME = `test-db-${Date.now()}`;
@@ -39,9 +45,9 @@ describe("DB-level encryption", () => {
   it("la valeur stockée n'est pas le plaintext", async () => {
     // SELECT direct dans la DB via docker exec.
     const rows = await selectRows(
-      `SELECT key, "encryptedValue" FROM "Secret" s
-       JOIN "Environment" e ON e.id = s."environmentId"
-       JOIN "Project" p ON p.id = e."projectId"
+      `SELECT key, "encryptedValue" FROM "${TENANT_SCHEMA}"."Secret" s
+       JOIN "${TENANT_SCHEMA}"."Environment" e ON e.id = s."environmentId"
+       JOIN "${TENANT_SCHEMA}"."Project" p ON p.id = e."projectId"
        WHERE p.slug = '${PROJECT_SLUG}'`,
     );
     expect(rows.length).toBeGreaterThan(0);
@@ -57,9 +63,9 @@ describe("DB-level encryption", () => {
 
   it("deux secrets avec la même valeur ont des IV différents", async () => {
     const rows = await selectRows(
-      `SELECT iv, "encryptedValue" FROM "Secret" s
-       JOIN "Environment" e ON e.id = s."environmentId"
-       JOIN "Project" p ON p.id = e."projectId"
+      `SELECT iv, "encryptedValue" FROM "${TENANT_SCHEMA}"."Secret" s
+       JOIN "${TENANT_SCHEMA}"."Environment" e ON e.id = s."environmentId"
+       JOIN "${TENANT_SCHEMA}"."Project" p ON p.id = e."projectId"
        WHERE p.slug = '${PROJECT_SLUG}' AND s.key = 'DATABASE_URL'`,
     );
     expect(rows.length).toBe(2);
@@ -74,9 +80,9 @@ describe("DB-level encryption", () => {
 
   it("le tag GCM est présent et au format base64 (16 octets = 24 chars)", async () => {
     const rows = await selectRows(
-      `SELECT tag FROM "Secret" s
-       JOIN "Environment" e ON e.id = s."environmentId"
-       JOIN "Project" p ON p.id = e."projectId"
+      `SELECT tag FROM "${TENANT_SCHEMA}"."Secret" s
+       JOIN "${TENANT_SCHEMA}"."Environment" e ON e.id = s."environmentId"
+       JOIN "${TENANT_SCHEMA}"."Project" p ON p.id = e."projectId"
        WHERE p.slug = '${PROJECT_SLUG}'`,
     );
     expect(rows.length).toBeGreaterThan(0);
@@ -100,8 +106,8 @@ describe("DB-level encryption", () => {
 
     // SELECT du tokenHash : doit être un hex SHA-256, pas le token.
     const hash = await execSql(
-      `SELECT "tokenHash" FROM "MachineToken" mt
-       JOIN "Project" p ON p.id = mt."projectId"
+      `SELECT "tokenHash" FROM "${TENANT_SCHEMA}"."MachineToken" mt
+       JOIN "${TENANT_SCHEMA}"."Project" p ON p.id = mt."projectId"
        WHERE p.slug = '${PROJECT_SLUG}' AND mt.name = 'db-test-token'`,
     );
     expect(hash).toMatch(/^[0-9a-f]{64}$/);

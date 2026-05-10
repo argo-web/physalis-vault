@@ -52,7 +52,12 @@ export async function requestPasswordReset(
     };
   }
 
-  const tenantSlug = tenantSlugFromHost(reqHeaders.get("host"));
+  // X-Forwarded-Host prioritaire : derrière un reverse proxy (NPM,
+  // etc.) le Host header pointe sur l'IP interne — c'est le
+  // X-Forwarded-Host qui contient le hostname public vu par l'user.
+  const tenantSlug = tenantSlugFromHost(
+    reqHeaders.get("x-forwarded-host") ?? reqHeaders.get("host"),
+  );
   if (!tenantSlug) {
     return {
       ok: false,

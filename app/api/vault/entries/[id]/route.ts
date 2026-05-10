@@ -86,6 +86,7 @@ export async function GET(req: Request, { params }: Params) {
       totpSecret,
       tags: entry.tags,
       favorite: entry.favorite,
+      collectionId: entry.collectionId,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
     },
@@ -115,6 +116,7 @@ export async function PATCH(req: Request, { params }: Params) {
         totpSecret?: string | null;
         tags?: string[];
         favorite?: boolean;
+        collectionId?: string | null;
       }
     | null;
   if (!body || typeof body !== "object") {
@@ -133,6 +135,7 @@ export async function PATCH(req: Request, { params }: Params) {
     totpSecretTag?: string | null;
     tags?: string[];
     favorite?: boolean;
+    collectionId?: string | null;
   } = {};
   const changed: string[] = [];
 
@@ -225,6 +228,25 @@ export async function PATCH(req: Request, { params }: Params) {
     data.favorite = body.favorite;
     changed.push("favorite");
   }
+  if ("collectionId" in body) {
+    if (body.collectionId === null || body.collectionId === "") {
+      data.collectionId = null;
+    } else if (typeof body.collectionId === "string") {
+      // Vérifie l'ownership de la collection cible (pas de leak cross-user).
+      const col = await prisma.vaultCollection.findFirst({
+        where: { id: body.collectionId, userId: user.id },
+        select: { id: true },
+      });
+      if (!col) {
+        return NextResponse.json(
+          { error: "collectionId not found" },
+          { status: 400 },
+        );
+      }
+      data.collectionId = col.id;
+    }
+    changed.push("collectionId");
+  }
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ ok: true });
@@ -240,6 +262,7 @@ export async function PATCH(req: Request, { params }: Params) {
       username: true,
       tags: true,
       favorite: true,
+      collectionId: true,
       createdAt: true,
       updatedAt: true,
     },

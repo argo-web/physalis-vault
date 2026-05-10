@@ -2,43 +2,27 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { signOut } from "@/lib/auth";
-import { adminPrisma, prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { getCurrentOrgSlug } from "@/lib/api";
-import { requireTenantContext } from "@/lib/tenant-guard";
-import { getTenantLoginUrl } from "@/lib/plans";
 import OrgSwitcher from "./org-switcher";
 import HeaderNav from "./header-nav";
 
-const TENANT_DOMAIN = process.env.PHYSALIS_TENANT_DOMAIN ?? "physalis.cloud";
-const SHARED_PORTAL =
-  process.env.PHYSALIS_SHARED_PORTAL ?? "vault.physalis.cloud";
+// Self-host : single-tenant. Pas de bandeau billing/quota Stripe (réservé
+// au SaaS). Le layout original est dans le repo SaaS.
 
 export default async function DashboardLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  // Phase 5.1 — entrée du contexte tenant pour TOUTES les pages /(dashboard)/*.
-  // Les `prisma.X.Y(...)` en aval (dans cette layout, dans les pages, et dans
-  // les server components imbriqués qui s'exécutent dans la même requête)
-  // résolvent automatiquement vers `client_<slug>.X` via search_path.
-  // Si pas de session ou pas de tenant slug → redirect (cf. requireTenantContext).
-  const { slug, userId, email } = await requireTenantContext();
-
-  // URL de logout : on renvoie l'user vers SA page de login tenant
-  // (sous-domaine pour SHARED/DEDICATED, ?tenant= pour FREE) sinon NextAuth
-  // utilise NEXTAUTH_URL=vault.physalis.cloud/login et l'user retombe sur le
-  // portail SUPERADMIN où ses creds tenant sont rejetés.
-  const tenantClient = await adminPrisma.client.findUnique({
-    where: { slug },
-    select: { plan: true },
-  });
-  const logoutRedirect = tenantClient
-    ? getTenantLoginUrl(tenantClient.plan, slug, {
-        tenantDomain: TENANT_DOMAIN,
-        sharedPortal: SHARED_PORTAL,
-      })
-    : "/login";
+  const session = await auth();
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+  const userId = session.user.id;
+  const email = session.user.email ?? "";
 
   const memberships = await prisma.orgMember.findMany({
     where: { userId },
@@ -85,7 +69,7 @@ export default async function DashboardLayout({
           <form
             action={async () => {
               "use server";
-              await signOut({ redirectTo: logoutRedirect });
+              await signOut({ redirectTo: "/login" });
             }}
           >
             <button type="submit" className="btn btn-ghost btn-sm">

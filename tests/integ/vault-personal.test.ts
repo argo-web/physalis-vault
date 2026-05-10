@@ -15,6 +15,8 @@ import {
   deleteReq,
   ADMIN_EMAIL,
   ADMIN_PASSWORD,
+  TENANT_SCHEMA,
+  TENANT_SLUG,
 } from "./helpers/api";
 import { execSql, selectRows } from "./helpers/db";
 
@@ -33,30 +35,30 @@ beforeAll(async () => {
   const id = "ck" + randomBytes(11).toString("hex");
   const passwordHash = await bcrypt.hash(ALICE_PASSWORD, 12);
   await execSql(
-    `INSERT INTO "User" (id, email, password, role, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."User" (id, email, password, role, "createdAt")
      VALUES ('${id}', '${ALICE_EMAIL}', '${passwordHash}', 'MEMBER', NOW())`,
   );
   // Org + OrgMember pour ne pas casser le login (LOGIN_SUCCESS rattache a primaryOrg).
   const orgId = "ck" + randomBytes(11).toString("hex");
   await execSql(
-    `INSERT INTO "Organization" (id, name, slug, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."Organization" (id, name, slug, "createdAt")
      VALUES ('${orgId}', 'alice vault org', 'alice-vault-${SUFFIX}', NOW())`,
   );
   const memId = "ck" + randomBytes(11).toString("hex");
   await execSql(
-    `INSERT INTO "OrgMember" (id, "userId", "organizationId", role, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."OrgMember" (id, "userId", "organizationId", role, "createdAt")
      VALUES ('${memId}', '${id}', '${orgId}', 'OWNER', NOW())`,
   );
   aliceId = id;
-  aliceSession = await loginAs(ALICE_EMAIL, ALICE_PASSWORD);
-  adminSess = await loginAs(ADMIN_EMAIL, ADMIN_PASSWORD);
+  aliceSession = await loginAs(ALICE_EMAIL, ALICE_PASSWORD, undefined, TENANT_SLUG);
+  adminSess = await loginAs(ADMIN_EMAIL, ADMIN_PASSWORD, undefined, TENANT_SLUG);
 });
 
 afterAll(async () => {
   if (aliceId) {
-    await execSql(`DELETE FROM "User" WHERE id = '${aliceId}'`).catch(() => {});
+    await execSql(`DELETE FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceId}'`).catch(() => {});
     await execSql(
-      `DELETE FROM "Organization" WHERE slug = 'alice-vault-${SUFFIX}'`,
+      `DELETE FROM "${TENANT_SCHEMA}"."Organization" WHERE slug = 'alice-vault-${SUFFIX}'`,
     ).catch(() => {});
   }
 });
@@ -88,7 +90,7 @@ describe("/api/vault/entries — coffre personnel", () => {
 
   it("le password est chiffre en base, jamais en clair", async () => {
     const rows = await selectRows(
-      `SELECT "encryptedPassword" FROM "VaultEntry" WHERE id = '${aliceEntryId}'`,
+      `SELECT "encryptedPassword" FROM "${TENANT_SCHEMA}"."VaultEntry" WHERE id = '${aliceEntryId}'`,
     );
     expect(rows.length).toBe(1);
     expect(rows[0]).not.toContain(PLAINTEXT_MARKER);
@@ -143,7 +145,7 @@ describe("/api/vault/entries — coffre personnel", () => {
   it("PATCH password → re-encrypt en base", async () => {
     const newMarker = `new-${PLAINTEXT_MARKER}`;
     const oldEncrypted = await execSql(
-      `SELECT "encryptedPassword" FROM "VaultEntry" WHERE id = '${aliceEntryId}'`,
+      `SELECT "encryptedPassword" FROM "${TENANT_SCHEMA}"."VaultEntry" WHERE id = '${aliceEntryId}'`,
     );
 
     const res = await patchJson(
@@ -154,7 +156,7 @@ describe("/api/vault/entries — coffre personnel", () => {
     expect(res.status).toBe(200);
 
     const newEncrypted = await execSql(
-      `SELECT "encryptedPassword" FROM "VaultEntry" WHERE id = '${aliceEntryId}'`,
+      `SELECT "encryptedPassword" FROM "${TENANT_SCHEMA}"."VaultEntry" WHERE id = '${aliceEntryId}'`,
     );
     expect(newEncrypted).not.toBe(oldEncrypted);
     expect(newEncrypted).not.toContain(newMarker);
@@ -233,9 +235,9 @@ describe("/api/vault/entries — coffre personnel", () => {
 
   it("audit log peuple : CREATE, UPDATE, REVEAL, DELETE rattaches a Alice", async () => {
     const rows = await selectRows(
-      `SELECT action FROM "AccessLog"
+      `SELECT action FROM "${TENANT_SCHEMA}"."AccessLog"
        WHERE "actorUserId" = '${aliceId}'
-         AND action LIKE 'VAULT_ENTRY_%'
+         AND action::text LIKE 'VAULT_ENTRY_%'
        ORDER BY "createdAt" ASC`,
     );
     // On a fait : create + reveal + patch favorite + reveal admin (404 → pas de log)

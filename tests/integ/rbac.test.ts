@@ -8,6 +8,9 @@ import {
   deleteReq,
   patchJson,
   BASE_URL,
+  TENANT_SCHEMA,
+  TENANT_SLUG,
+  TENANT_HOST,
 } from "./helpers/api";
 import { execSql } from "./helpers/db";
 
@@ -41,16 +44,22 @@ async function provisionBobAsOrgMember(orgId: string, invitedById: string) {
 
   // INSERT direct dans la DB.
   await execSql(
-    `INSERT INTO "Invitation" (id, email, "organizationId", role, "tokenHash", "expiresAt", "invitedById", "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."Invitation" (id, email, "organizationId", role, "tokenHash", "expiresAt", "invitedById", "createdAt")
      VALUES ('${id}', '${BOB_EMAIL}', '${orgId}', 'MEMBER', '${tokenHash}', '${expiresAt}', '${invitedById}', NOW())`,
   );
 
   // Accept via HTTP (crée le user + valide l'invite).
+  // X-Forwarded-Host : la route déduit le tenant slug depuis le hostname
+  // pour valider que l'invite est bien acceptée depuis le bon workspace.
   const res = await fetch(
     `${BASE_URL}/api/invitations/${token}/register-and-accept`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-host": TENANT_HOST,
+        "x-forwarded-for": `203.0.113.${Math.floor(Math.random() * 254) + 1}`,
+      },
       body: JSON.stringify({ password: BOB_PASSWORD }),
     },
   );
@@ -65,10 +74,10 @@ beforeAll(async () => {
 
   // Récupère l'orgId admin et son userId pour les FK.
   adminOrgId = (
-    await execSql(`SELECT id FROM "Organization" WHERE slug = 'admin'`)
+    await execSql(`SELECT id FROM "${TENANT_SCHEMA}"."Organization" WHERE slug = 'admin'`)
   ).trim();
   const adminUserId = (
-    await execSql(`SELECT id FROM "User" WHERE email = 'admin@artpotentiel.fr'`)
+    await execSql(`SELECT id FROM "${TENANT_SCHEMA}"."User" WHERE email = 'admin@artpotentiel.fr'`)
   ).trim();
   if (!adminOrgId || !adminUserId) {
     throw new Error("Admin org or user not found in DB");
@@ -90,10 +99,10 @@ beforeAll(async () => {
   // Provisionne Bob comme OrgMember.
   await provisionBobAsOrgMember(adminOrgId, adminUserId);
   bobUserId = (
-    await execSql(`SELECT id FROM "User" WHERE email = '${BOB_EMAIL}'`)
+    await execSql(`SELECT id FROM "${TENANT_SCHEMA}"."User" WHERE email = '${BOB_EMAIL}'`)
   ).trim();
 
-  bobSession = await loginAs(BOB_EMAIL, BOB_PASSWORD);
+  bobSession = await loginAs(BOB_EMAIL, BOB_PASSWORD, undefined, TENANT_SLUG);
 });
 
 afterAll(async () => {
@@ -102,7 +111,7 @@ afterAll(async () => {
   }
   // Cleanup Bob (cascade supprime invitation + orgmember).
   if (bobUserId) {
-    await execSql(`DELETE FROM "User" WHERE id = '${bobUserId}'`).catch(
+    await execSql(`DELETE FROM "${TENANT_SCHEMA}"."User" WHERE id = '${bobUserId}'`).catch(
       () => {},
     );
   }
@@ -130,7 +139,7 @@ describe("RBAC — VIEWER sur le projet", () => {
     // pour ça encore — c'est un point pour la todo).
     const id = "ck" + randomBytes(11).toString("hex");
     await execSql(
-      `INSERT INTO "ProjectMember" (id, "userId", "projectId", role)
+      `INSERT INTO "${TENANT_SCHEMA}"."ProjectMember" (id, "userId", "projectId", role)
        VALUES ('${id}', '${bobUserId}', '${projectId}', 'VIEWER')`,
     );
     // Setup : admin met une clé pour qu'on puisse tester reveal.

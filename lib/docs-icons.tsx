@@ -12,6 +12,7 @@
 import {
   RiBookOpenLine,
   RiCloudLine,
+  RiFlowChart,
   RiFolderOpenLine,
   RiKey2Line,
   RiPuzzle2Line,
@@ -26,6 +27,7 @@ import {
 const ICONS: Record<string, RemixiconComponentType> = {
   RiBookOpenLine,
   RiCloudLine,
+  RiFlowChart,
   RiFolderOpenLine,
   RiKey2Line,
   RiPuzzle2Line,

@@ -7,7 +7,9 @@ import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 
-const DB_CONTAINER = process.env.TEST_DB_CONTAINER ?? "secretvault-db";
+const DB_CONTAINER = process.env.TEST_DB_CONTAINER ?? "physalis-db";
+const DB_USER = process.env.TEST_DB_USER ?? "physalis";
+const DB_NAME = process.env.TEST_DB_NAME ?? "physalis";
 
 /**
  * Exécute une requête SQL via psql dans le conteneur DB. Retourne stdout
@@ -22,9 +24,9 @@ export async function execSql(sql: string): Promise<string> {
     DB_CONTAINER,
     "psql",
     "-U",
-    "secretvault",
+    DB_USER,
     "-d",
-    "secretvault",
+    DB_NAME,
     "-AtX",
     "-c",
     sql,

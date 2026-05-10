@@ -165,6 +165,17 @@ export async function DELETE(req: Request, { params }: Params) {
   const access = await requireProjectMember(slug, "OWNER");
   if ("error" in access) return access.error;
 
+  // Phase 11c — cleanup des OrgToken qui référencent ce projet :
+  // retire son ID de allowedProjectIds[]. Pas de FK array native en
+  // Postgres → on fait l'update applicatif via array_remove.
+  // Les OrgToken avec allProjects=true ne sont pas concernés.
+  await prisma.$executeRaw`
+    UPDATE "OrgToken"
+    SET "allowedProjectIds" = array_remove("allowedProjectIds", ${access.project.id})
+    WHERE "organizationId" = ${access.project.organizationId}
+      AND ${access.project.id} = ANY("allowedProjectIds")
+  `;
+
   await prisma.project.delete({ where: { id: access.project.id } });
 
   logAction({

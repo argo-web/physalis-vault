@@ -40,10 +40,15 @@ model User {
   createdMachineTokens MachineToken[]    @relation("machineTokenCreator")
   pluginTokens         PluginToken[]
   vaultEntries         VaultEntry[]
+  vaultCollections     VaultCollection[]
   teamVaultMemberships TeamVaultMember[]
   oneTimeShares        OneTimeShare[]    @relation("oneTimeShareCreator")
   accessLogs           AccessLog[]       @relation("accessLogActor")
   secretRequests       SecretRequest[]   @relation("secretRequestCreator")
+  secretVersions       SecretVersion[]   @relation("secretVersionCreator")
+  orgSecretVersions    OrgSecretVersion[] @relation("orgSecretVersionCreator")
+  userTokens           UserToken[]
+  orgTokensCreated     OrgToken[]        @relation("orgTokenCreator")
   createdAt            DateTime          @default(now())
 }
 
@@ -75,6 +80,7 @@ model Organization {
   oneTimeShares        OneTimeShare[]
   accessLogs           AccessLog[]
   secretRequests       SecretRequest[]
+  orgTokens            OrgToken[]
   createdAt            DateTime              @default(now())
 }
 
@@ -97,15 +103,16 @@ model Server {
 }
 
 model OrgSecret {
-  id             String       @id @default(cuid())
+  id             String             @id @default(cuid())
   key            String
   encryptedValue String
   iv             String
   tag            String
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  versions       OrgSecretVersion[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   @@unique([organizationId, key])
 }
@@ -190,6 +197,8 @@ model Service {
   encryptedData String
   iv            String
   tag           String
+  /// Tags techniques pour filtrage par les intégrations (N8n, Make).
+  tags          String[] @default([])
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdAt     DateTime @default(now())
@@ -204,6 +213,8 @@ model AppAccount {
   encryptedData String
   iv            String
   tag           String
+  /// Tags techniques pour filtrage par les intégrations (N8n, Make).
+  tags          String[] @default([])
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdAt     DateTime @default(now())
@@ -231,18 +242,57 @@ model Environment {
 }
 
 model Secret {
-  id             String      @id @default(cuid())
+  id             String          @id @default(cuid())
   key            String
   encryptedValue String
   iv             String
   tag            String
   category       String?
+  /// Tags techniques pour filtrage par les intégrations (N8n, Make).
+  tags           String[]        @default([])
   environmentId  String
-  environment    Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  environment    Environment     @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  versions       SecretVersion[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   @@unique([environmentId, key])
+}
+
+/// Historique des valeurs d'un Secret (Phase 10 — versioning).
+/// Rétention 50 max par secret, UNIQUE(secretId, version) pour gérer les
+/// race conditions sur MAX(version)+1 (retry côté code).
+model SecretVersion {
+  id             String   @id @default(cuid())
+  secretId       String
+  secret         Secret   @relation(fields: [secretId], references: [id], onDelete: Cascade)
+  encryptedValue String
+  iv             String
+  tag            String
+  version        Int
+  createdById    String?
+  createdBy      User?    @relation("secretVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+
+  @@unique([secretId, version])
+  @@index([secretId, version(sort: Desc)])
+}
+
+/// Historique des valeurs d'un OrgSecret (Phase 10 — versioning).
+model OrgSecretVersion {
+  id             String    @id @default(cuid())
+  orgSecretId    String
+  orgSecret      OrgSecret @relation(fields: [orgSecretId], references: [id], onDelete: Cascade)
+  encryptedValue String
+  iv             String
+  tag            String
+  version        Int
+  createdById    String?
+  createdBy      User?     @relation("orgSecretVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+
+  @@unique([orgSecretId, version])
+  @@index([orgSecretId, version(sort: Desc)])
 }
 
 model MachineToken {
@@ -258,6 +308,56 @@ model MachineToken {
   lastUsedAt    DateTime?
   createdAt     DateTime    @default(now())
   revokedAt     DateTime?
+}
+
+/// UserToken (Phase 11a) — token Bearer scopé à un User. Donne accès READ
+/// aux projets dont l'user est ProjectMember. Préfixe brut `sv_user_<32 hex>`.
+model UserToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique
+  prefix     String
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// OrgToken (Phase 11c) — token Bearer scopé à une Organization. Survit
+/// au départ du créateur (createdById SetNull). Workflows N8n / Make
+/// pérennes. Préfixe brut `sv_org_<32 hex>`.
+model OrgToken {
+  id                String          @id @default(cuid())
+  organizationId    String
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  tokenHash         String          @unique
+  prefix            String
+  allProjects       Boolean         @default(false)
+  allowedProjectIds String[]        @default([])
+  allowedScopes     OrgTokenScope[] @default([])
+  expiresAt         DateTime?
+  lastUsedAt        DateTime?
+  revokedAt         DateTime?
+  createdById       String?
+  createdBy         User?           @relation("orgTokenCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt         DateTime        @default(now())
+
+  @@index([organizationId])
+  @@index([expiresAt])
+}
+
+enum OrgTokenScope {
+  SECRETS_READ
+  SERVICES_READ
+  ACCOUNTS_READ
+  PROJECTS_LIST
 }
 
 model ProjectMember {
@@ -292,9 +392,12 @@ enum ProjectRole {
 }
 
 model VaultEntry {
-  id                  String   @id @default(cuid())
+  id                  String           @id @default(cuid())
   userId              String
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Collection perso optionnelle (V2.0). NULL = "Sans catégorie".
+  collectionId        String?
+  collection          VaultCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
   name                String
   url                 String?
   username            String?
@@ -304,11 +407,29 @@ model VaultEntry {
   encryptedTotpSecret String?
   totpSecretIv        String?
   totpSecretTag       String?
-  tags                String[] @default([])
-  favorite            Boolean  @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  tags                String[]         @default([])
+  favorite            Boolean          @default(false)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
+  @@index([userId])
+  @@index([collectionId])
+}
+
+/// Collection perso d'un User (V2.0 — coffre personnel).
+/// Mirror simplifié de TeamVaultCollection : pas de members, scope user
+/// strict (un user n'accède qu'à SES collections).
+model VaultCollection {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  slug      String
+  entries   VaultEntry[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([userId, slug])
   @@index([userId])
 }
 
@@ -499,6 +620,22 @@ enum AccessAction {
   SECRET_REQUEST_IMPORTED
   SECRET_REQUEST_REVOKED
   SECRET_REQUEST_EXPIRED
+  // Versioning des secrets (Phase 10)
+  SECRET_VERSION_REVEAL
+  SECRET_ROLLBACK
+  ORG_SECRET_VERSION_REVEAL
+  ORG_SECRET_ROLLBACK
+  // Coffre personnel V2 — collections
+  VAULT_PERSONAL_COLLECTION_CREATE
+  VAULT_PERSONAL_COLLECTION_DELETE
+  // Phase 11 — Tokens d'intégration et endpoints integrations
+  USER_TOKEN_CREATE
+  USER_TOKEN_REVOKE
+  INTEGRATION_CREDENTIALS_FETCH
+  INTEGRATION_PROJECTS_LIST
+  ORG_TOKEN_CREATE
+  ORG_TOKEN_REVOKE
+  ORG_TOKEN_REGENERATE
 }
 
 /// Demande de secret externe (Phase 9). Un user DEV+ crée la demande,
@@ -643,6 +780,8 @@ enum TokenKind {
   PLUGIN
   SHARE
   SECRET_REQUEST
+  USER
+  ORG
 }
 
 model PasswordResetToken {

@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import SecurityPanel from "./security-panel";
 import PluginSessionsPanel from "./plugin-sessions-panel";
+import UserTokensPanel from "./user-tokens-panel";
 
 export default async function SecurityPage() {
   const session = await auth();
@@ -36,6 +37,7 @@ export default async function SecurityPage() {
             initialEnabled={me.twoFactorEnabled}
             initialBackupCount={me.backupCodes.length}
           />
+          <UserTokensPanel />
           <PluginSessionsPanel />
         </div>
       </div>

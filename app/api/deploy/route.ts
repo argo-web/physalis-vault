@@ -214,6 +214,51 @@ export async function POST(req: Request) {
 
   const { tenantSlug, project, environment, policyId } = match;
 
+  // Garde-fou plan FREE — granularité par organisation.
+  // En FREE, le quota inclut 1 organisation. La "primary org" du tenant
+  // (la plus ancienne) est considérée comme couverte par le plan ; les
+  // autres organisations sont excédentaires et leurs déploiements OIDC
+  // sont bloqués. Cette granularité permet à un client downgradé qui a
+  // gardé plusieurs orgs de continuer à déployer son org principale,
+  // tout en bloquant les déploiements automatiques sur les ressources
+  // hors quota.
+  const tenantClient = await adminPrisma.client.findUnique({
+    where: { slug: tenantSlug },
+    select: { plan: true },
+  });
+  if (tenantClient?.plan === "FREE") {
+    const tenantPrisma = getTenantPrisma(tenantSlug);
+    const primaryOrg = await tenantPrisma.organization.findFirst({
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (!primaryOrg || primaryOrg.id !== project.organizationId) {
+      logAction({
+        action: "DEPLOY_DENIED",
+        actor: { kind: "anonymous" },
+        organizationId: project.organizationId,
+        projectId: project.id,
+        environmentId: environment.id,
+        targetType: "Policy",
+        targetId: policyId,
+        metadata: {
+          reason: "free_plan_org_excess",
+          projectOrgId: project.organizationId,
+          primaryOrgId: primaryOrg?.id ?? null,
+        },
+        req,
+        tenantSlug,
+      });
+      return NextResponse.json(
+        {
+          error:
+            "Plan FREE — déploiements OIDC autorisés uniquement pour l'organisation principale (la plus ancienne). Souscrivez un plan payant pour réactiver les déploiements sur les autres organisations.",
+        },
+        { status: 403 },
+      );
+    }
+  }
+
   if (!environment.server) {
     logAction({
       action: "DEPLOY_DENIED",

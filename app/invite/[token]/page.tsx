@@ -30,8 +30,13 @@ export default async function InvitePage({
   // L'invité arrive depuis un email externe → pas de session ni de
   // contexte tenant en AsyncLocalStorage. Le slug doit venir du subdomain
   // du Host header (`<slug>.physalis.cloud`).
+  // X-Forwarded-Host prioritaire : derrière un reverse proxy (NPM, etc.)
+  // le Host header pointe sur l'IP interne du container — c'est le
+  // X-Forwarded-Host qui contient le hostname public vu par l'utilisateur.
   const reqHeaders = await headers();
-  const tenantSlug = tenantSlugFromHost(reqHeaders.get("host"));
+  const tenantSlug = tenantSlugFromHost(
+    reqHeaders.get("x-forwarded-host") ?? reqHeaders.get("host"),
+  );
   if (!tenantSlug) {
     return (
       <div className="login-wrap">

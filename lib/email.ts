@@ -443,3 +443,287 @@ export async function sendShareConsumedEmail(
     html,
   });
 }
+
+// ── Billing : confirmation de souscription ─────────────────────────────────
+
+export type CheckoutCompletedEmailParams = {
+  to: string;
+  clientName: string;
+  planLabel: string;
+  /** Prix base mensuel en cents (sans add-ons). */
+  basePriceCents: number;
+  /** URL absolue vers /account pour gérer l'abonnement. */
+  accountUrl: string;
+};
+
+/**
+ * Envoyé immédiatement après qu'un user OWNER ait complété un Stripe
+ * Checkout avec succès. Confirme l'activation du plan + rappelle où
+ * gérer l'abonnement. Le reçu de paiement détaillé (avec montant
+ * exact, factures) est envoyé séparément par Stripe (Settings >
+ * Customer emails > Successful payments) — on évite ainsi de
+ * dupliquer les chiffres et les obligations légales de facturation.
+ */
+export async function sendCheckoutCompletedEmail(
+  params: CheckoutCompletedEmailParams,
+): Promise<void> {
+  const priceLabel = formatEuroPrice(params.basePriceCents);
+  const text = [
+    `Bonjour,`,
+    ``,
+    `Votre abonnement Physalis ${params.planLabel.toUpperCase()} est`,
+    `maintenant actif pour ${params.clientName}.`,
+    ``,
+    `Tarif de base : ${priceLabel}/mois (hors add-ons éventuels).`,
+    ``,
+    `Stripe vous a envoyé séparément le reçu de paiement détaillé`,
+    `avec le montant exact et le lien pour télécharger votre facture.`,
+    ``,
+    `Gérer votre abonnement (changement de plan, ajout/retrait`,
+    `d'organisations ou de sièges, mise à jour de la carte, factures) :`,
+    params.accountUrl,
+    ``,
+    `À très vite,`,
+    `L'équipe Physalis`,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#1a1a2e">
+      <h2 style="margin:0 0 16px;font-size:20px">Abonnement activé</h2>
+      <p style="margin:0 0 12px">
+        Votre abonnement Physalis <strong>${params.planLabel.toUpperCase()}</strong>
+        est maintenant actif pour <strong>${params.clientName}</strong>.
+      </p>
+      <div style="margin:16px 0;padding:12px 16px;background:#f5f3ef;border-radius:8px;font-size:14px">
+        <strong>Tarif de base :</strong> ${priceLabel}/mois (hors add-ons éventuels).
+      </div>
+      <p style="margin:0 0 12px;font-size:13px;color:#718096">
+        Stripe vous a envoyé séparément le reçu de paiement détaillé avec
+        le montant exact et le lien pour télécharger votre facture.
+      </p>
+      <a href="${params.accountUrl}"
+         style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1a1f35;color:#fff;border-radius:8px;text-decoration:none;font-weight:500">
+        Gérer mon abonnement
+      </a>
+    </div>
+  `;
+
+  await sendEmail({
+    to: params.to,
+    subject: `Bienvenue sur Physalis ${params.planLabel.toUpperCase()} — ${params.clientName}`,
+    text,
+    html,
+  });
+}
+
+function formatEuroPrice(cents: number): string {
+  const euros = cents / 100;
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: euros % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(euros);
+}
+
+// ── Billing : passage au plan FREE ─────────────────────────────────────────
+
+export type DowngradeFreeEmailParams = {
+  to: string;
+  clientName: string;
+  /** Nombre d'organisations utilisées au moment du downgrade. */
+  orgsCount: number;
+  /** Nombre d'utilisateurs utilisés au moment du downgrade. */
+  usersCount: number;
+  /** URL absolue vers /account pour upgrade. */
+  accountUrl: string;
+};
+
+/**
+ * Envoyé immédiatement après qu'un OWNER ait basculé son tenant sur le
+ * plan FREE. Confirme le downgrade, mentionne les ressources en
+ * overage si applicable, rappelle que les données sont conservées.
+ */
+export async function sendDowngradeFreeEmail(
+  params: DowngradeFreeEmailParams,
+): Promise<void> {
+  const FREE_MAX_ORGS = 1;
+  const FREE_MAX_USERS = 1;
+  const orgsOver = params.orgsCount > FREE_MAX_ORGS;
+  const usersOver = params.usersCount > FREE_MAX_USERS;
+  const inOverage = orgsOver || usersOver;
+
+  const lines = [
+    `Bonjour,`,
+    ``,
+    `Votre abonnement Physalis pour ${params.clientName} a été basculé sur le plan FREE.`,
+    `Votre carte ne sera plus prélevée.`,
+    ``,
+    `État actuel de votre compte :`,
+    `• ${params.orgsCount} organisation${params.orgsCount > 1 ? "s" : ""} (quota FREE : ${FREE_MAX_ORGS})`,
+    `• ${params.usersCount} utilisateur${params.usersCount > 1 ? "s" : ""} (quota FREE : ${FREE_MAX_USERS})`,
+    ``,
+  ];
+
+  if (inOverage) {
+    lines.push(
+      `⚠ Votre usage dépasse les quotas FREE. Tant que cette situation`,
+      `dure :`,
+      `  • Création de nouvelles organisations et utilisateurs bloquée.`,
+      `  • Déploiements automatiques (GitHub Actions OIDC) désactivés sur les organisations excédentaires (l'organisation principale reste autorisée).`,
+      ``,
+      `Vos données existantes sont conservées intégralement. Il vous suffit`,
+      `de re-souscrire un plan payant à tout moment pour tout réactiver`,
+      `instantanément.`,
+      ``,
+    );
+  } else {
+    lines.push(
+      `Votre usage rentre dans les quotas FREE. Aucune restriction.`,
+      ``,
+    );
+  }
+
+  lines.push(
+    `Gérer mon abonnement :`,
+    params.accountUrl,
+    ``,
+    `À très vite,`,
+    `L'équipe Physalis`,
+  );
+
+  const text = lines.join("\n");
+
+  const overageBlockHtml = inOverage
+    ? `
+      <div style="margin:16px 0;padding:14px 18px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;color:#78350f">
+        <strong>Votre compte est en overage</strong>
+        <ul style="margin:8px 0 0 18px;padding:0;font-size:14px">
+          <li>Création de nouvelles organisations / utilisateurs bloquée.</li>
+          <li>Déploiements automatiques (GitHub Actions OIDC) désactivés sur les organisations excédentaires (l'organisation principale reste autorisée).</li>
+        </ul>
+        <p style="margin:8px 0 0;font-size:13px">
+          Vos données sont conservées. Re-souscrivez à tout moment pour tout réactiver.
+        </p>
+      </div>
+    `
+    : `
+      <p style="margin:8px 0;font-size:14px;color:#14532d">
+        Votre usage rentre dans les quotas FREE. Aucune restriction.
+      </p>
+    `;
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#1a1a2e">
+      <h2 style="margin:0 0 16px;font-size:20px">Passage au plan FREE confirmé</h2>
+      <p style="margin:0 0 12px">
+        Votre abonnement Physalis pour <strong>${params.clientName}</strong> a été
+        basculé sur le plan FREE. Votre carte ne sera plus prélevée.
+      </p>
+      <div style="margin:16px 0;padding:12px 16px;background:#f5f3ef;border-radius:8px;font-size:14px">
+        <strong>État de votre compte :</strong><br>
+        • ${params.orgsCount} organisation${params.orgsCount > 1 ? "s" : ""}
+        (quota FREE : ${FREE_MAX_ORGS})<br>
+        • ${params.usersCount} utilisateur${params.usersCount > 1 ? "s" : ""}
+        (quota FREE : ${FREE_MAX_USERS})
+      </div>
+      ${overageBlockHtml}
+      <a href="${params.accountUrl}"
+         style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1a1f35;color:#fff;border-radius:8px;text-decoration:none;font-weight:500">
+        Gérer mon abonnement
+      </a>
+    </div>
+  `;
+
+  await sendEmail({
+    to: params.to,
+    subject: `Passage au plan FREE confirmé — ${params.clientName}`,
+    text,
+    html,
+  });
+}
+
+// ── Billing : relances overage ─────────────────────────────────────────────
+
+export type OverageReminderEmailParams = {
+  to: string;
+  clientName: string;
+  orgsCount: number;
+  usersCount: number;
+  accountUrl: string;
+};
+
+/** Relance J+7 après un downgrade FREE si l'overage persiste. */
+export async function sendOverageReminderJ7Email(
+  params: OverageReminderEmailParams,
+): Promise<void> {
+  await sendOverageReminderEmail(params, "J7");
+}
+
+/** Relance J+30 après un downgrade FREE si l'overage persiste. */
+export async function sendOverageReminderJ30Email(
+  params: OverageReminderEmailParams,
+): Promise<void> {
+  await sendOverageReminderEmail(params, "J30");
+}
+
+async function sendOverageReminderEmail(
+  params: OverageReminderEmailParams,
+  variant: "J7" | "J30",
+): Promise<void> {
+  const subject =
+    variant === "J7"
+      ? "Vos ressources Physalis vous attendent"
+      : "Dernière relance — vos données sont toujours là";
+  const lead =
+    variant === "J7"
+      ? `Cela fait une semaine que votre compte ${params.clientName} est en overage sur le plan FREE.`
+      : `Cela fait un mois que votre compte ${params.clientName} est en overage sur le plan FREE.`;
+
+  const text = [
+    `Bonjour,`,
+    ``,
+    lead,
+    ``,
+    `Vos ressources actuelles :`,
+    `• ${params.orgsCount} organisation${params.orgsCount > 1 ? "s" : ""}`,
+    `• ${params.usersCount} utilisateur${params.usersCount > 1 ? "s" : ""}`,
+    ``,
+    `Toutes vos données sont conservées et restent accessibles. Cependant :`,
+    `  • Vous ne pouvez pas créer de nouvelles ressources.`,
+    `  • Les déploiements automatiques sont désactivés sur les organisations excédentaires.`,
+    ``,
+    `Pour tout réactiver instantanément, re-souscrivez un plan payant :`,
+    params.accountUrl,
+    ``,
+    `À très vite,`,
+    `L'équipe Physalis`,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#1a1a2e">
+      <h2 style="margin:0 0 16px;font-size:20px">${subject}</h2>
+      <p style="margin:0 0 12px">${lead}</p>
+      <div style="margin:16px 0;padding:12px 16px;background:#f5f3ef;border-radius:8px;font-size:14px">
+        <strong>Vos ressources actuelles :</strong><br>
+        • ${params.orgsCount} organisation${params.orgsCount > 1 ? "s" : ""}<br>
+        • ${params.usersCount} utilisateur${params.usersCount > 1 ? "s" : ""}
+      </div>
+      <p style="margin:0 0 12px;font-size:14px">
+        Toutes vos données sont conservées. Re-souscrivez à tout moment
+        pour tout réactiver instantanément.
+      </p>
+      <a href="${params.accountUrl}"
+         style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1a1f35;color:#fff;border-radius:8px;text-decoration:none;font-weight:500">
+        Re-souscrire un plan
+      </a>
+    </div>
+  `;
+
+  await sendEmail({
+    to: params.to,
+    subject: `${subject} — ${params.clientName}`,
+    text,
+    html,
+  });
+}

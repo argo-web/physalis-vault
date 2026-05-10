@@ -9,6 +9,8 @@ import {
   deleteReq,
   ADMIN_EMAIL,
   ADMIN_PASSWORD,
+  TENANT_SCHEMA,
+  TENANT_SLUG,
 } from "./helpers/api";
 import { execSql } from "./helpers/db";
 
@@ -25,18 +27,18 @@ async function provisionAlice() {
   const id = "ck" + randomBytes(11).toString("hex");
   const passwordHash = await bcrypt.hash(ALICE_PASSWORD, 12);
   await execSql(
-    `INSERT INTO "User" (id, email, password, role, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."User" (id, email, password, role, "createdAt")
      VALUES ('${id}', '${ALICE_EMAIL}', '${passwordHash}', 'MEMBER', NOW())`,
   );
   // Créer une org pour elle (sinon LOGIN_SUCCESS ne sait pas où rattacher).
   const orgId = "ck" + randomBytes(11).toString("hex");
   await execSql(
-    `INSERT INTO "Organization" (id, name, slug, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."Organization" (id, name, slug, "createdAt")
      VALUES ('${orgId}', 'alice org', 'alice-2fa-${SUFFIX}', NOW())`,
   );
   const memId = "ck" + randomBytes(11).toString("hex");
   await execSql(
-    `INSERT INTO "OrgMember" (id, "userId", "organizationId", role, "createdAt")
+    `INSERT INTO "${TENANT_SCHEMA}"."OrgMember" (id, "userId", "organizationId", role, "createdAt")
      VALUES ('${memId}', '${id}', '${orgId}', 'OWNER', NOW())`,
   );
   return id;
@@ -49,10 +51,10 @@ beforeAll(async () => {
 afterAll(async () => {
   if (aliceUserId) {
     await execSql(
-      `DELETE FROM "User" WHERE id = '${aliceUserId}'`,
+      `DELETE FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     ).catch(() => {});
     await execSql(
-      `DELETE FROM "Organization" WHERE slug = 'alice-2fa-${SUFFIX}'`,
+      `DELETE FROM "${TENANT_SCHEMA}"."Organization" WHERE slug = 'alice-2fa-${SUFFIX}'`,
     ).catch(() => {});
   }
 });
@@ -63,7 +65,7 @@ describe("2FA — flow d'activation", () => {
   let backupCodes: string[] = [];
 
   it("Alice peut se logger sans 2FA initialement", async () => {
-    aliceSession = await loginAs(ALICE_EMAIL, ALICE_PASSWORD);
+    aliceSession = await loginAs(ALICE_EMAIL, ALICE_PASSWORD, undefined, TENANT_SLUG);
     expect(aliceSession).toBeDefined();
   });
 
@@ -90,7 +92,7 @@ describe("2FA — flow d'activation", () => {
 
   it("le secret est chiffré en base (pas en clair)", async () => {
     const stored = await execSql(
-      `SELECT "twoFactorSecret" FROM "User" WHERE id = '${aliceUserId}'`,
+      `SELECT "twoFactorSecret" FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     );
     expect(stored).toBeTruthy();
     expect(stored).not.toContain(setupSecret);
@@ -105,7 +107,7 @@ describe("2FA — flow d'activation", () => {
     expect(res.status).toBe(401);
 
     const enabled = await execSql(
-      `SELECT "twoFactorEnabled" FROM "User" WHERE id = '${aliceUserId}'`,
+      `SELECT "twoFactorEnabled" FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     );
     expect(enabled).toBe("f");
   });
@@ -119,7 +121,7 @@ describe("2FA — flow d'activation", () => {
     backupCodes = body.backupCodes;
 
     const enabled = await execSql(
-      `SELECT "twoFactorEnabled" FROM "User" WHERE id = '${aliceUserId}'`,
+      `SELECT "twoFactorEnabled" FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     );
     expect(enabled).toBe("t");
   });
@@ -139,6 +141,7 @@ describe("2FA — flow d'activation", () => {
       csrfToken,
       email: ALICE_EMAIL,
       password: ALICE_PASSWORD,
+      tenantSlug: TENANT_SLUG,
     }).toString();
     const res = await session.fetch("/api/auth/callback/credentials", {
       method: "POST",
@@ -160,6 +163,7 @@ describe("2FA — flow d'activation", () => {
       csrfToken,
       email: ALICE_EMAIL,
       password: ALICE_PASSWORD,
+      tenantSlug: TENANT_SLUG,
       totpCode: "000000",
     }).toString();
     const res = await session.fetch("/api/auth/callback/credentials", {
@@ -180,6 +184,7 @@ describe("2FA — flow d'activation", () => {
       csrfToken,
       email: ALICE_EMAIL,
       password: ALICE_PASSWORD,
+      tenantSlug: TENANT_SLUG,
       totpCode: code,
     }).toString();
     const res = await session.fetch("/api/auth/callback/credentials", {
@@ -201,6 +206,7 @@ describe("2FA — flow d'activation", () => {
       csrfToken,
       email: ALICE_EMAIL,
       password: ALICE_PASSWORD,
+      tenantSlug: TENANT_SLUG,
       totpCode: usedBackup,
     }).toString();
     const res = await session.fetch("/api/auth/callback/credentials", {
@@ -213,7 +219,7 @@ describe("2FA — flow d'activation", () => {
 
     // Le code utilisé est retiré : il reste 7 codes dans backupCodes.
     const remaining = await execSql(
-      `SELECT cardinality("backupCodes") FROM "User" WHERE id = '${aliceUserId}'`,
+      `SELECT cardinality("backupCodes") FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     );
     expect(remaining).toBe("7");
   });
@@ -227,6 +233,7 @@ describe("2FA — flow d'activation", () => {
       csrfToken,
       email: ALICE_EMAIL,
       password: ALICE_PASSWORD,
+      tenantSlug: TENANT_SLUG,
       totpCode: usedBackup,
     }).toString();
     const res = await session.fetch("/api/auth/callback/credentials", {
@@ -255,7 +262,7 @@ describe("2FA — flow d'activation", () => {
     expect(res.status).toBe(401);
 
     const enabled = await execSql(
-      `SELECT "twoFactorEnabled" FROM "User" WHERE id = '${aliceUserId}'`,
+      `SELECT "twoFactorEnabled" FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     );
     expect(enabled).toBe("t");
   });
@@ -271,7 +278,7 @@ describe("2FA — flow d'activation", () => {
 
     const row = await execSql(
       `SELECT "twoFactorEnabled", "twoFactorSecret" IS NULL, cardinality("backupCodes")
-       FROM "User" WHERE id = '${aliceUserId}'`,
+       FROM "${TENANT_SCHEMA}"."User" WHERE id = '${aliceUserId}'`,
     );
     expect(row).toBe("f|t|0");
   });
@@ -281,14 +288,14 @@ describe("2FA — audit log", () => {
   let admin: Session;
 
   beforeAll(async () => {
-    admin = await loginAs(ADMIN_EMAIL, ADMIN_PASSWORD);
+    admin = await loginAs(ADMIN_EMAIL, ADMIN_PASSWORD, undefined, TENANT_SLUG);
   });
 
   it("contient les actions 2FA tracées", async () => {
     // Toutes ces actions n'ont pas d'organizationId pour Alice (non rattachée
     // à l'org admin), mais elles sont visibles via une query DB directe.
     const rows = await execSql(
-      `SELECT action FROM "AccessLog"
+      `SELECT action FROM "${TENANT_SCHEMA}"."AccessLog"
        WHERE "actorUserEmail" = '${ALICE_EMAIL}' OR "actorUserId" = '${aliceUserId}'
        ORDER BY "createdAt" ASC`,
     );
@@ -302,7 +309,7 @@ describe("2FA — audit log", () => {
 
   it("contient TWO_FACTOR_FAILURE pour les codes invalides", async () => {
     const rows = await execSql(
-      `SELECT count(*) FROM "AccessLog"
+      `SELECT count(*) FROM "${TENANT_SCHEMA}"."AccessLog"
        WHERE action = 'TWO_FACTOR_FAILURE'
        AND ("actorUserEmail" = '${ALICE_EMAIL}'
             OR (metadata->>'email') = '${ALICE_EMAIL}')`,

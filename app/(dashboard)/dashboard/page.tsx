@@ -22,8 +22,9 @@ import { auth } from "@/lib/auth";
 import { adminPrisma, prisma } from "@/lib/prisma";
 import { getCurrentOrgSlug } from "@/lib/api";
 import { isPlatformAdmin } from "@/lib/roles";
-import { PLAN_LABELS, PLAN_PRICES } from "@/lib/plans";
 import type { AccessAction } from "@prisma/client";
+// Self-host : pas de billing/trial Stripe (BillingCard et TrialBanner
+// supprimés en self-host — uniquement SaaS).
 import ExtensionInstallPrompt from "./extension-install-prompt";
 import PendingInvitations from "./pending-invitations";
 
@@ -187,19 +188,33 @@ export default async function DashboardPage({
           },
         })
       : Promise.resolve([] as RecentActivityRow[]),
-    // Métadonnées plan + quotas (admin schema, hors tenant).
+    // Métadonnées plan + quotas + état billing (admin schema, hors tenant).
     session.user.tenantSlug
       ? adminPrisma.client.findUnique({
           where: { slug: session.user.tenantSlug },
           select: {
+            id: true,
             plan: true,
             maxOrgs: true,
             maxUsers: true,
+            // extraOrgs/extraUsers : champs SaaS de billing add-ons,
+            // absents du schema self-host.
             comped: true,
+            status: true,
+            trialEndsAt: true,
           },
         })
       : Promise.resolve(null),
   ]);
+
+  // L'user est OWNER s'il a au moins une OrgMember role=OWNER dans le
+  // tenant. Utilisé pour conditionner l'affichage des actions billing.
+  const isTenantOwner = await prisma.orgMember
+    .findFirst({
+      where: { userId: session.user.id, role: "OWNER" },
+      select: { id: true },
+    })
+    .then((m) => Boolean(m));
 
   const activeProjectCount = recentDeploys.length;
   const activityTotalPages = Math.max(
@@ -293,38 +308,36 @@ export default async function DashboardPage({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
                 gap: 14,
                 marginBottom: 24,
               }}
             >
-              <Stat
-                label="Organisation"
-                value={org._count.members}
-                unit={`membre${org._count.members > 1 ? "s" : ""}`}
-                hint={`${myOrgsCount} organisation${myOrgsCount > 1 ? "s" : ""}`}
+              <CountCard
+                primary={{
+                  value: org._count.members,
+                  label: "Membres",
+                }}
+                secondary={{
+                  value: myOrgsCount,
+                  label: "Organisations",
+                }}
               />
-              <Stat
-                label="Projets"
-                value={activeProjectCount}
-                unit={`actif${activeProjectCount > 1 ? "s" : ""} / ${projectCount}`}
+              <CountCard
+                primary={{
+                  value: `${activeProjectCount} / ${projectCount}`,
+                  label: "Projets actifs",
+                }}
+                secondary={{
+                  value: secretCount,
+                  label: "Secrets",
+                }}
               />
-              <Stat
-                label="Secrets"
-                value={secretCount}
-                unit={`secret${secretCount > 1 ? "s" : ""}`}
-              />
-              {tenantClient && (
-                <PlanCard
-                  plan={tenantClient.plan}
-                  comped={tenantClient.comped}
-                  orgs={tenantOrgsCount}
-                  maxOrgs={tenantClient.maxOrgs}
-                  users={tenantUsersCount}
-                  maxUsers={tenantClient.maxUsers}
-                />
-              )}
+              {/* BillingCard supprimé en self-host (pas de plans payants). */}
             </div>
+
+            {/* TrialBanner supprimé en self-host (pas de période d'essai). */}
 
             <RecentActivity
               items={activityRows}
@@ -340,111 +353,40 @@ export default async function DashboardPage({
   );
 }
 
-function Stat({
-  label,
-  value,
-  unit,
-  hint,
+// Card empilant 2 stats : chacune a son eyebrow orange (majuscules,
+// couleur accent) en label, puis la valeur. Le label fait office de
+// titre — pas d'eyebrow séparé pour la card entière.
+function CountCard({
+  primary,
+  secondary,
 }: {
-  label: string;
-  value: number;
-  unit?: string;
-  hint?: string;
+  primary: { value: string | number; label: string };
+  secondary?: { value: string | number; label: string };
 }) {
   return (
-    <div className="card" style={{ padding: 20 }}>
-      <div
-        className="section-eyebrow"
-        style={{ marginBottom: 6, fontSize: 11 }}
-      >
-        {label}
+    <div
+      className="card"
+      style={{
+        padding: 20,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
+    >
+      <div>
+        <div className="section-eyebrow">{primary.label}</div>
+        <div style={{ fontSize: 28, fontWeight: 600, lineHeight: 1.1 }}>
+          {primary.value}
+        </div>
       </div>
-      <div style={{ fontSize: 28, fontWeight: 600, lineHeight: 1.1 }}>
-        {value}
-        {unit && (
-          <span
-            style={{
-              fontSize: 14,
-              fontWeight: 400,
-              color: "var(--muted)",
-              marginLeft: 6,
-            }}
-          >
-            {unit}
-          </span>
-        )}
-      </div>
-      {hint && (
-        <div
-          className="help"
-          style={{ marginTop: 6, fontSize: 12 }}
-        >
-          {hint}
+      {secondary && (
+        <div>
+          <div className="section-eyebrow">{secondary.label}</div>
+          <div style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.1 }}>
+            {secondary.value}
+          </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function PlanCard({
-  plan,
-  comped,
-  orgs,
-  maxOrgs,
-  users,
-  maxUsers,
-}: {
-  plan: "FREE" | "SHARED" | "DEDICATED";
-  comped: boolean;
-  orgs: number;
-  maxOrgs: number;
-  users: number;
-  maxUsers: number;
-}) {
-  const priceLabel = comped ? "Offert" : PLAN_PRICES[plan];
-  return (
-    <div className="card" style={{ padding: 20 }}>
-      <div
-        className="section-eyebrow"
-        style={{ marginBottom: 6, fontSize: 11 }}
-      >
-        Plan
-      </div>
-      <div style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.1 }}>
-        {PLAN_LABELS[plan]}
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 400,
-            color: "var(--muted)",
-            marginLeft: 8,
-          }}
-        >
-          {priceLabel}
-        </span>
-      </div>
-      <div
-        style={{
-          marginTop: 10,
-          display: "flex",
-          gap: 16,
-          fontSize: 13,
-          color: "var(--muted)",
-        }}
-      >
-        <div>
-          <span style={{ color: "var(--fg)", fontWeight: 500 }}>
-            {orgs}/{maxOrgs}
-          </span>{" "}
-          org{maxOrgs > 1 ? "s" : ""}
-        </div>
-        <div>
-          <span style={{ color: "var(--fg)", fontWeight: 500 }}>
-            {users}/{maxUsers}
-          </span>{" "}
-          membre{maxUsers > 1 ? "s" : ""}
-        </div>
-      </div>
     </div>
   );
 }

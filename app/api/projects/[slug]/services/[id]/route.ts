@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { readJson, requireProjectMember } from "@/lib/api";
 import { logAction } from "@/lib/audit";
+import { normalizeTags, TAG_VALIDATION_ERROR } from "@/lib/tags";
 
 type Params = { params: Promise<{ slug: string; id: string }> };
 
@@ -78,6 +79,7 @@ export async function PATCH(req: Request, { params }: Params) {
         url?: string | null;
         user?: string;
         password?: string;
+        tags?: string[];
       }
     | null;
   if (!body || typeof body !== "object") {
@@ -90,6 +92,7 @@ export async function PATCH(req: Request, { params }: Params) {
     encryptedData?: string;
     iv?: string;
     tag?: string;
+    tags?: string[];
   } = {};
   const changed: string[] = [];
 
@@ -130,6 +133,20 @@ export async function PATCH(req: Request, { params }: Params) {
     if (typeof body.password === "string") changed.push("password");
   }
 
+  if ("tags" in body) {
+    const tags = normalizeTags(body.tags);
+    if (tags === null) {
+      return NextResponse.json({ error: TAG_VALIDATION_ERROR }, { status: 400 });
+    }
+    const sameTags =
+      service.tags.length === tags.length &&
+      service.tags.every((t, i) => t === tags[i]);
+    if (!sameTags) {
+      data.tags = tags;
+      changed.push("tags");
+    }
+  }
+
   if (changed.length === 0) {
     return NextResponse.json({ ok: true, service });
   }
@@ -137,7 +154,7 @@ export async function PATCH(req: Request, { params }: Params) {
   const updated = await prisma.service.update({
     where: { id: service.id },
     data,
-    select: { id: true, name: true, url: true, updatedAt: true, createdAt: true },
+    select: { id: true, name: true, url: true, tags: true, updatedAt: true, createdAt: true },
   });
 
   logAction({

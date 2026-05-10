@@ -10,6 +10,8 @@ import {
 } from "@/lib/api";
 import { isValidCategory } from "@/lib/categories";
 import { logAction } from "@/lib/audit";
+import { createSecretVersion } from "@/lib/versioning";
+import { normalizeTags, TAG_VALIDATION_ERROR } from "@/lib/tags";
 
 type Params = { params: Promise<{ slug: string; env: string }> };
 
@@ -20,7 +22,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   const secrets = await prisma.secret.findMany({
     where: { environmentId: access.environment.id },
-    select: { key: true, category: true, updatedAt: true, createdAt: true },
+    select: { key: true, category: true, tags: true, updatedAt: true, createdAt: true },
     orderBy: { key: "asc" },
   });
 
@@ -33,7 +35,7 @@ export async function POST(req: Request, { params }: Params) {
   if ("error" in access) return access.error;
 
   const body = (await readJson(req)) as
-    | { key?: string; value?: string; category?: string | null }
+    | { key?: string; value?: string; category?: string | null; tags?: string[] }
     | null;
   if (!body || typeof body.key !== "string" || typeof body.value !== "string") {
     return NextResponse.json(
@@ -69,32 +71,56 @@ export async function POST(req: Request, { params }: Params) {
     category = body.category;
   }
 
+  const tags = normalizeTags(body.tags);
+  if (tags === null) {
+    return NextResponse.json({ error: TAG_VALIDATION_ERROR }, { status: 400 });
+  }
+
+  // Lit la valeur ACTUELLE du secret (avec encryptedValue/iv/tag) pour
+  // créer une version avant l'écrasement. Si pas existant → CREATE
+  // simple sans versioning (la valeur initiale n'a pas d'historique).
   const existing = await prisma.secret.findUnique({
     where: {
       environmentId_key: { environmentId: access.environment.id, key },
     },
-    select: { id: true },
+    select: { id: true, encryptedValue: true, iv: true, tag: true },
   });
 
   const payload = encrypt(body.value);
-  const secret = await prisma.secret.upsert({
-    where: {
-      environmentId_key: { environmentId: access.environment.id, key },
-    },
-    create: {
-      key,
-      environmentId: access.environment.id,
-      category,
-      ...payload,
-    },
-    update: { ...payload, category },
-    select: {
-      id: true,
-      key: true,
-      category: true,
-      updatedAt: true,
-      createdAt: true,
-    },
+
+  // Transaction : snapshot ancien (si existant) + upsert nouveau, atomique.
+  const secret = await prisma.$transaction(async (tx) => {
+    if (existing) {
+      await createSecretVersion({
+        tx,
+        secretId: existing.id,
+        encryptedValue: existing.encryptedValue,
+        iv: existing.iv,
+        tag: existing.tag,
+        createdById: access.user.id,
+      });
+    }
+    return tx.secret.upsert({
+      where: {
+        environmentId_key: { environmentId: access.environment.id, key },
+      },
+      create: {
+        key,
+        environmentId: access.environment.id,
+        category,
+        tags,
+        ...payload,
+      },
+      update: { ...payload, category, tags },
+      select: {
+        id: true,
+        key: true,
+        category: true,
+        tags: true,
+        updatedAt: true,
+        createdAt: true,
+      },
+    });
   });
 
   logAction({
@@ -115,6 +141,7 @@ export async function POST(req: Request, { params }: Params) {
       secret: {
         key: secret.key,
         category: secret.category,
+        tags: secret.tags,
         createdAt: secret.createdAt,
         updatedAt: secret.updatedAt,
       },

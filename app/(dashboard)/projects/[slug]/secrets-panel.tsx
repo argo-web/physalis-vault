@@ -2,17 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { ProjectRole } from "@prisma/client";
-import { RiKey2Line } from "@remixicon/react";
+import { RiHistoryLine, RiKey2Line } from "@remixicon/react";
 import {
   SECRET_CATEGORIES,
   SECRET_CATEGORY_LABELS,
   UNCATEGORIZED_LABEL,
   type SecretCategory,
 } from "@/lib/categories";
+import SecretHistoryDialog from "@/components/SecretHistoryDialog";
+import TagsInput from "@/components/TagsInput";
 
 type SecretListItem = {
   key: string;
   category: SecretCategory | null;
+  tags: string[];
   updatedAt: string;
 };
 
@@ -36,8 +39,17 @@ export default function SecretsPanel({
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
   const [editKey, setEditKey] = useState<string | null>(null);
+  const [historyKey, setHistoryKey] = useState<string | null>(null);
 
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
+
+  // Suggestions de tags = tags existants chez ce projet/env, dédupliqués.
+  const allTags = useMemo<string[]>(() => {
+    if (!secrets) return [];
+    const set = new Set<string>();
+    for (const s of secrets) for (const t of s.tags) set.add(t);
+    return Array.from(set).sort();
+  }, [secrets]);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -150,6 +162,8 @@ export default function SecretsPanel({
             env={env}
             initialKey={s.key}
             initialCategory={s.category}
+            initialTags={s.tags}
+            allTags={allTags}
             onCancel={() => setEditKey(null)}
             onSaved={() => {
               setEditKey(null);
@@ -173,6 +187,15 @@ export default function SecretsPanel({
             <span className="code-mono">
               {revealed[s.key] !== undefined ? revealed[s.key] : "••••••••••••"}
             </span>
+            {s.tags.length > 0 && (
+              <span className="flex flex-wrap gap-1">
+                {s.tags.map((t) => (
+                  <span key={t} className="chip" style={{ fontSize: 10 }}>
+                    {t}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         </div>
         <div className="row-actions">
@@ -185,6 +208,14 @@ export default function SecretsPanel({
           </button>
           {canEdit && (
             <>
+              <button
+                type="button"
+                onClick={() => setHistoryKey(s.key)}
+                className="btn btn-ghost btn-xs"
+                title="Voir l'historique des versions"
+              >
+                <RiHistoryLine size={12} aria-hidden /> Historique
+              </button>
               <button
                 type="button"
                 onClick={() => setEditKey(s.key)}
@@ -281,6 +312,21 @@ export default function SecretsPanel({
           ))}
         </div>
       )}
+
+      {historyKey && (
+        <SecretHistoryDialog
+          apiBaseUrl={`/api/projects/${slug}/${env}/secrets/${encodeURIComponent(historyKey)}/versions`}
+          secretKey={historyKey}
+          onClose={() => setHistoryKey(null)}
+          onRestored={() => {
+            // Le rollback a remplacé la valeur courante. On recharge la
+            // liste pour mettre à jour `updatedAt` ; les valeurs révélées
+            // localement deviennent obsolètes, on les vide.
+            setRevealed({});
+            reload();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -290,6 +336,8 @@ function SecretForm({
   env,
   initialKey,
   initialCategory,
+  initialTags,
+  allTags,
   onCancel,
   onSaved,
 }: {
@@ -297,6 +345,8 @@ function SecretForm({
   env: string;
   initialKey?: string;
   initialCategory?: SecretCategory | null;
+  initialTags?: string[];
+  allTags?: string[];
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -305,6 +355,7 @@ function SecretForm({
   const [category, setCategory] = useState<SecretCategory | "">(
     initialCategory ?? "",
   );
+  const [tags, setTags] = useState<string[]>(initialTags ?? []);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const isEdit = Boolean(initialKey);
@@ -320,6 +371,7 @@ function SecretForm({
           key,
           value,
           category: category === "" ? null : category,
+          tags,
         }),
       });
       if (!res.ok) {
@@ -375,6 +427,15 @@ function SecretForm({
             ))}
           </select>
         </div>
+      </div>
+      <div className="field" style={{ marginTop: 8 }}>
+        <label>
+          Tags techniques{" "}
+          <span className="text-muted" style={{ fontSize: 11 }}>
+            (pour les intégrations N8n / Make — ex: postgres, stripe)
+          </span>
+        </label>
+        <TagsInput value={tags} onChange={setTags} suggestions={allTags ?? []} />
       </div>
       {error && (
         <p className="error-text" style={{ marginTop: 8 }}>
