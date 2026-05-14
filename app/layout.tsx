@@ -1,10 +1,17 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Physalis",
   description: "Self-hosted secrets manager",
+};
+
+// Sans cet export, mobile zoome-out a 980px par defaut et l'app n'est
+// pas du tout responsive. Next 15 separe viewport de metadata.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default async function RootLayout({

@@ -95,6 +95,19 @@ html, body {
 }
 .org-pill .chev { color: var(--muted); margin-left: 2px; font-size: 10px; }
 
+.app-nav-wrap { position: relative; display: inline-flex; align-items: center; }
+.app-nav-toggle {
+  display: none; /* visible uniquement en mobile (cf. @media plus bas) */
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--fg);
+  font-family: inherit;
+  line-height: 0;
+}
+.app-nav-toggle:hover { background: var(--code-bg); }
 .app-nav { display: flex; align-items: center; gap: 24px; }
 .app-nav a {
   font-size: 13px;
@@ -371,8 +384,22 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
 .row-meta {
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   font-size: 12px; color: var(--muted); margin-top: 3px;
+  /* min-width 0 : autorise les enfants a tronquer (sinon le contenu
+   * pousse au-dela de la colonne grid et chevauche row-actions). */
+  min-width: 0;
 }
-.row-meta a { color: var(--accent); text-decoration: none; }
+.row-meta a {
+  color: var(--accent);
+  text-decoration: none;
+  /* Troncation des URLs longues : evite que ca pousse row-actions hors
+   * du cadre. max-width: 100% du parent row-info (qui a min-width: 0). */
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 .row-meta a:hover { text-decoration: underline; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
@@ -778,6 +805,40 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   letter-spacing: 0;
 }
 
+/* ─── Boutons actions de la sidebar vault (hover reveal) ────────────
+ * Les boutons ✏️ / ✕ apparaissent au hover de l'item de sidebar pour
+ * garder un look epure. Les regles vivent ici (pas en styled-jsx)
+ * pour echapper au scoping et matcher la className brute. */
+.vault-sidebar-action {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.vault-sidebar-action:focus-visible {
+  /* Accessibilite clavier : on rend visible des qu'on focus au clavier
+   * meme sans hover souris. */
+  opacity: 1;
+}
+.vault-sidebar-item:hover .vault-sidebar-action,
+.vault-sidebar-item:focus-within .vault-sidebar-action {
+  opacity: 1;
+}
+
+/* ─── Coffre personnel (/vault) ──────────────────────────────────────
+ * Layout sidebar (collections) + liste secrets. En mobile on stack
+ * vertical et on neutralise le sticky pour eviter le scroll horizontal
+ * et permettre au user d'atteindre la liste sans gymnastique. */
+.vault-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.vault-shell-aside { position: sticky; top: 16px; }
+@media (max-width: 640px) {
+  .vault-shell { grid-template-columns: 1fr; gap: 16px; }
+  .vault-shell-aside { position: static; top: auto; }
+}
+
 /* ─── Documentation (/docs) ───────────────────────────────────────── */
 
 .docs-shell {
@@ -785,6 +846,12 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   grid-template-columns: 264px minmax(0, 1fr);
   gap: 36px;
   align-items: start;
+}
+/* Sur la home /docs, le wrapper DocsSidebar retourne null : on passe
+ * en single-column pour que la grille des cartes prenne toute la
+ * largeur. */
+.docs-shell:not(:has(> aside)) {
+  grid-template-columns: 1fr;
 }
 @media (max-width: 880px) {
   .docs-shell { grid-template-columns: 1fr; gap: 20px; }
@@ -798,6 +865,12 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 18px 12px 14px;
+}
+/* Override : neutralise le sticky en mobile. DOIT venir apres la regle
+ * de base ci-dessus, sinon la cascade (specificite egale + source order
+ * plus tardif gagne) la rendrait inoperante. */
+@media (max-width: 880px) {
+  .docs-sidebar { position: static; top: auto; }
 }
 .docs-sidebar-eyebrow {
   font-size: 10px;
@@ -817,7 +890,7 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
 .docs-nav { display: flex; flex-direction: column; gap: 1px; }
 .docs-nav-item {
   display: grid;
-  grid-template-columns: 22px 26px 1fr;
+  grid-template-columns: 26px 1fr;
   align-items: center;
   gap: 8px;
   padding: 9px 10px;
@@ -841,14 +914,6 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   color: #fff;
   border-color: var(--accent);
 }
-.docs-nav-num {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  color: var(--muted);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-.docs-nav-item.active .docs-nav-num { color: var(--accent); }
 .docs-nav-icon {
   width: 26px;
   height: 26px;
@@ -860,10 +925,6 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   justify-content: center;
   color: var(--fg);
   flex-shrink: 0;
-}
-/* Pour le lien "Accueil" (pas de numéro) on neutralise la 1re colonne. */
-.docs-nav-item:first-child {
-  grid-template-columns: 26px 1fr;
 }
 .docs-nav-label {
   white-space: nowrap;
@@ -911,6 +972,7 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 14px;
+  padding: 8px 4px;
 }
 .docs-card {
   display: grid;
@@ -1070,3 +1132,145 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
 }
 .docs-prose th { background: var(--accent-bg); font-weight: 600; }
 .docs-prose hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+
+/* ─── Responsive (mobile) ─────────────────────────────────────────────
+ * Quick wins globaux : on adresse les patterns les plus repandus
+ * (header, page, section-header, row, form, dialog) sans toucher
+ * aux composants TSX individuels. Cible 375px+ (iPhone SE et up).
+ * Breakpoint principal : 640px (tablette portrait / smartphone landscape).
+ * Sous-breakpoint : 480px pour les ajustements plus fins.
+ * ────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  /* Header & nav : padding reduit, items qui peuvent wrap */
+  .app-header {
+    padding: 10px 14px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .app-header::after { left: 14px; right: 14px; }
+
+  /* Burger toggle visible, nav cachee par defaut, ouverte en dropdown
+   * absolute sous le header quand .is-open. */
+  .app-nav-toggle { display: inline-flex; }
+  .app-nav { display: none; }
+  .app-nav.is-open {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 220px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    box-shadow: 0 12px 32px -12px rgba(31,31,31,0.25);
+    z-index: 40;
+  }
+  .app-nav.is-open a {
+    padding: 9px 10px;
+    border-radius: 7px;
+    color: var(--fg);
+  }
+  .app-nav.is-open a:hover { background: var(--code-bg); }
+  .app-nav.is-open a.active {
+    background: var(--accent-bg);
+    color: var(--fg);
+    font-weight: 600;
+  }
+  /* On neutralise la barre accent du desktop (.active::after) qui ne
+   * fait pas sens dans un dropdown. */
+  .app-nav.is-open a.active::after { display: none; }
+
+  /* Page : padding reduit */
+  .page {
+    padding: 20px 14px 32px;
+  }
+  h1.page-title { font-size: 22px; }
+  .page-header {
+    /* deja flex-wrap, on force quand meme stack pour les longues actions */
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .page-actions { width: 100%; }
+
+  /* Section headers : autorise le wrap (titre + bouton sur 2 lignes si besoin) */
+  .section-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Cards : padding reduit */
+  .card { padding: 14px; }
+  .create-card { padding: 14px; }
+
+  /* Row list : on stack actions sous le contenu plutot que sur le cote
+   * pour eviter overflow. Le grid passe a 36px + 1fr, et .row-actions
+   * va sur une 2eme ligne via grid-column. */
+  .row {
+    grid-template-columns: 36px 1fr;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .row-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+  .row-no-icon { flex-wrap: wrap; }
+
+  /* Forms : stack vertical par defaut, les .field prennent toute la largeur */
+  .form-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .field { min-width: 0; }
+
+  /* Dialogs : on colle aux bords, padding interne reduit */
+  .dialog-overlay { padding: 8px; }
+  .dialog {
+    max-height: calc(100vh - 16px);
+    border-radius: 12px;
+  }
+  .dialog-header {
+    padding: 12px 16px;
+    border-radius: 12px 12px 0 0;
+  }
+  .dialog-body { padding: 14px 16px; gap: 12px; }
+  .dialog-footer {
+    padding: 12px 16px;
+    border-radius: 0 0 12px 12px;
+    flex-wrap: wrap;
+  }
+
+  /* Tabs scrollables si trop nombreuses */
+  .tab-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .tab { padding: 10px 12px; }
+
+  /* Subtabs : permet wrap pour eviter overflow */
+  .subtab-bar { flex-wrap: wrap; }
+
+  /* Stats grid : 2 colonnes au lieu d'auto-fit minmax 180 */
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat-card-value { font-size: 22px; }
+}
+
+@media (max-width: 480px) {
+  /* Smartphone strict : on simplifie encore */
+  .app-header { padding: 8px 10px; }
+  .page { padding: 16px 10px 24px; }
+  h1.page-title { font-size: 20px; }
+  .brand { font-size: 14px; }
+
+  /* Stats : 1 colonne sous 480 */
+  .stat-grid { grid-template-columns: 1fr; }
+
+  /* Touch targets : btn-xs un peu plus grand pour eviter mistaps */
+  .btn-xs { padding: 5px 10px; font-size: 11px; }
+}

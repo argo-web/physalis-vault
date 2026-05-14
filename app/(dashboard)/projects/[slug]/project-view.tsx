@@ -79,7 +79,11 @@ export default function ProjectView({
   >("secrets");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const canManageProject = role === "OWNER";
+  // Gestion des membres : reste OWNER-only (gestion d'acces).
+  const canManageMembers = role === "OWNER";
+  // Edition des parametres techniques (name, slug, github config) :
+  // ouvert a EDITOR+. La suppression du projet reste OWNER cote backend.
+  const canEditProjectSettings = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
   const canManagePolicies = role === "OWNER" || orgRole === "DEV";
   const canRedeploy = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
 
@@ -128,7 +132,7 @@ export default function ProjectView({
         </div>
 
         <div style={{ display: "flex" }}>
-          {canManageProject && (
+          {canManageMembers && (
             <button
               type="button"
               className={`tab ${tab.kind === "members" ? "active" : ""}`}
@@ -144,7 +148,7 @@ export default function ProjectView({
           >
             Policies
           </button>
-          {canManageProject && (
+          {canEditProjectSettings && (
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
@@ -163,7 +167,10 @@ export default function ProjectView({
       {tab.kind === "access" ? (
         <AccessPanel slug={slug} role={role} environments={sortedEnvs} />
       ) : tab.kind === "vault" ? (
-        <TeamVaultPanel scope={{ kind: "project", projectSlug: slug }} />
+        <TeamVaultPanel
+          scope={{ kind: "project", projectSlug: slug }}
+          canCreate={canRedeploy}
+        />
       ) : tab.kind === "policies" ? (
         <PoliciesPanel
           slug={slug}
@@ -173,7 +180,7 @@ export default function ProjectView({
           defaultGithubRepo={githubRepo}
         />
       ) : tab.kind === "members" ? (
-        canManageProject ? (
+        canManageMembers ? (
           <MembersPanel slug={slug} />
         ) : null
       ) : activeEnv ? (
@@ -228,7 +235,7 @@ export default function ProjectView({
         </div>
       )}
 
-      {settingsOpen && canManageProject && (
+      {settingsOpen && canEditProjectSettings && (
         <SettingsDialog
           slug={slug}
           orgSlug={orgSlug}

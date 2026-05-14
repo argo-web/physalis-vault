@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { ProjectRole } from "@prisma/client";
-import { RiHistoryLine, RiKey2Line } from "@remixicon/react";
+import { RiDownload2Line, RiHistoryLine, RiKey2Line } from "@remixicon/react";
 import {
   SECRET_CATEGORIES,
   SECRET_CATEGORY_LABELS,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/categories";
 import SecretHistoryDialog from "@/components/SecretHistoryDialog";
 import TagsInput from "@/components/TagsInput";
+import SecretsImportDialog from "./secrets-import-dialog";
 
 type SecretListItem = {
   key: string;
@@ -38,6 +39,7 @@ export default function SecretsPanel({
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [editKey, setEditKey] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState<string | null>(null);
 
@@ -260,15 +262,34 @@ export default function SecretsPanel({
           Secrets — <span className="code-mono">{env}</span>
         </h2>
         {canEdit && !adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="btn btn-primary btn-sm"
-          >
-            + Ajouter un secret
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setImporting(true)}
+              className="btn btn-ghost btn-sm"
+              title="Importer un fichier .env"
+            >
+              <RiDownload2Line size={14} aria-hidden /> Importer .env
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="btn btn-primary btn-sm"
+            >
+              + Ajouter un secret
+            </button>
+          </div>
         )}
       </div>
+
+      {importing && canEdit && (
+        <SecretsImportDialog
+          slug={slug}
+          env={env}
+          onClose={() => setImporting(false)}
+          onImported={() => reload()}
+        />
+      )}
 
       {adding && canEdit && (
         <div className="create-card">
@@ -364,15 +385,37 @@ function SecretForm({
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const res = await fetch(`/api/projects/${slug}/${env}/secrets`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      let url: string;
+      let method: "POST" | "PATCH";
+      let body: Record<string, unknown>;
+      if (isEdit) {
+        // PATCH partiel : on envoie uniquement ce qui a change. La valeur
+        // reste inchangee en base si le champ est laisse vide. La cle peut
+        // changer (newKey) ; le serveur verifie l'unicite.
+        url = `/api/projects/${slug}/${env}/secrets/${encodeURIComponent(initialKey!)}`;
+        method = "PATCH";
+        body = {
+          category: category === "" ? null : category,
+          tags,
+        };
+        if (value !== "") body.value = value;
+        if (key !== initialKey) body.newKey = key;
+      } else {
+        // Creation : POST upsert (valeur obligatoire).
+        url = `/api/projects/${slug}/${env}/secrets`;
+        method = "POST";
+        body = {
           key,
           value,
           category: category === "" ? null : category,
           tags,
-        }),
+        };
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as
@@ -392,21 +435,27 @@ function SecretForm({
           <label>Clé</label>
           <input
             required
-            readOnly={isEdit}
             value={key}
             onChange={(e) => setKey(e.target.value.toUpperCase())}
             placeholder="DATABASE_URL"
             className="input input-mono"
           />
+          {isEdit && key !== initialKey && (
+            <div className="help">
+              La clé sera renommée. Les références extérieures (n8n,
+              workflows…) utilisant l&apos;ancienne clé devront être mises
+              à jour.
+            </div>
+          )}
         </div>
         <div className="field" style={{ minWidth: 240, flex: 2 }}>
-          <label>Valeur</label>
+          <label>Valeur{isEdit ? " (optionnel)" : ""}</label>
           <input
-            required
+            required={!isEdit}
             autoFocus={isEdit}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={isEdit ? "Nouvelle valeur" : "Valeur"}
+            placeholder={isEdit ? "(laisser vide pour ne pas modifier)" : "Valeur"}
             className="input input-mono"
           />
         </div>

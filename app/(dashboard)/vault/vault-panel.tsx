@@ -13,6 +13,7 @@ import { generatePassword } from "@/lib/generate-password";
 import { estimateStrength } from "@/lib/password-strength";
 import { computeDuplicates } from "@/lib/vault-duplicates";
 import ExtensionBanner from "./extension-banner";
+import RenameCollectionDialog from "../rename-collection-dialog";
 
 type VaultEntryListItem = {
   id: string;
@@ -80,6 +81,8 @@ export default function VaultPanel() {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [editing, setEditing] = useState<VaultEntryListItem | null>(null);
   const [adding, setAdding] = useState(false);
+  const [renamingCollection, setRenamingCollection] =
+    useState<VaultCollection | null>(null);
   const [moving, setMoving] = useState<VaultEntryListItem | null>(null);
   const [creatingCollection, setCreatingCollection] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -203,6 +206,10 @@ export default function VaultPanel() {
     reload();
   }
 
+  function renameCollection(c: VaultCollection) {
+    setRenamingCollection(c);
+  }
+
   async function reveal(id: string) {
     if (revealed[id] !== undefined) {
       setRevealed((r) => {
@@ -277,16 +284,9 @@ export default function VaultPanel() {
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "240px 1fr",
-        gap: 24,
-        alignItems: "start",
-      }}
-    >
+    <div className="vault-shell">
       {/* Sidebar — collections perso */}
-      <aside className="flex flex-col gap-1" style={{ position: "sticky", top: 16 }}>
+      <aside className="vault-shell-aside flex flex-col gap-1">
         <SidebarItem
           active={filter === "all"}
           onClick={() => setFilter("all")}
@@ -340,6 +340,7 @@ export default function VaultPanel() {
               icon={<RiFolderOpenLine size={16} aria-hidden />}
               label={c.name}
               count={c.entryCount}
+              onRename={() => renameCollection(c)}
               onDelete={() => removeCollection(c)}
             />
           ))
@@ -523,6 +524,18 @@ export default function VaultPanel() {
               setTimeout(() => setError(null), 3000);
               reload();
               reloadAllTags();
+              reloadCollections();
+            }}
+          />
+        )}
+
+        {renamingCollection && (
+          <RenameCollectionDialog
+            currentName={renamingCollection.name}
+            endpoint={`/api/vault/collections/${renamingCollection.id}`}
+            onClose={() => setRenamingCollection(null)}
+            onRenamed={() => {
+              setRenamingCollection(null);
               reloadCollections();
             }}
           />
@@ -870,6 +883,7 @@ function SidebarItem({
   count,
   muted,
   warning,
+  onRename,
   onDelete,
 }: {
   active: boolean;
@@ -879,9 +893,11 @@ function SidebarItem({
   count: number;
   muted?: boolean;
   warning?: boolean;
+  onRename?: () => void;
   onDelete?: () => void;
 }) {
   const color = warning ? "#f97316" : muted ? "var(--text-muted)" : "inherit";
+  const showActions = Boolean(onRename || onDelete);
   return (
     <div
       style={{
@@ -890,7 +906,7 @@ function SidebarItem({
         borderRadius: 6,
         background: active ? "var(--surface-hover, rgba(255,255,255,0.04))" : "transparent",
       }}
-      className={onDelete ? "vault-sidebar-item" : ""}
+      className={showActions ? "vault-sidebar-item" : ""}
     >
       <button
         type="button"
@@ -922,32 +938,44 @@ function SidebarItem({
           {count}
         </span>
       </button>
+      {onRename && (
+        <button
+          type="button"
+          onClick={onRename}
+          title="Renommer la collection"
+          aria-label={`Renommer ${label}`}
+          className="vault-sidebar-action"
+          style={{
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 6px",
+            fontSize: 12,
+            color: "var(--muted)",
+          }}
+        >
+          ✏️
+        </button>
+      )}
       {onDelete && (
         <button
           type="button"
           onClick={onDelete}
           title="Supprimer la collection"
           aria-label={`Supprimer ${label}`}
-          className="vault-sidebar-delete"
+          className="vault-sidebar-action"
           style={{
             background: "transparent",
             border: "none",
             cursor: "pointer",
             padding: "0 8px",
             fontSize: 14,
-            color: "var(--text-muted)",
-            opacity: 0,
-            transition: "opacity .15s",
+            color: "var(--muted)",
           }}
         >
           ✕
         </button>
       )}
-      <style jsx>{`
-        .vault-sidebar-item:hover :global(.vault-sidebar-delete) {
-          opacity: 1;
-        }
-      `}</style>
     </div>
   );
 }

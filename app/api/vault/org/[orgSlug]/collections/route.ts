@@ -16,13 +16,16 @@ export async function GET(_req: Request, { params }: Params) {
   const scope = await requireOrgScope(orgSlug, "MEMBER");
   if ("error" in scope) return scope.error;
 
-  // Liste : un user voit toutes les collections de l'org s'il est org
-  // ADMIN/OWNER, sinon uniquement celles ou il est explicitement membre.
-  const isAdmin = scope.orgRole === "ADMIN" || scope.orgRole === "OWNER";
+  // Visibilite : ADMIN/OWNER et DEV voient toutes les collections de l'org
+  // (DEV beneficie de l'EDITOR implicite sur toutes les collections org).
+  // MEMBER ne voit que celles ou il est TeamVaultMember explicite.
+  const orgRole = scope.orgRole;
+  const isOrgAdmin = orgRole === "ADMIN" || orgRole === "OWNER";
+  const canSeeAll = isOrgAdmin || orgRole === "DEV";
   const collections = await prisma.teamVaultCollection.findMany({
     where: {
       organizationId: scope.organizationId,
-      ...(isAdmin
+      ...(canSeeAll
         ? {}
         : { members: { some: { userId: scope.user.id } } }),
     },
@@ -41,6 +44,21 @@ export async function GET(_req: Request, { params }: Params) {
     orderBy: { name: "asc" },
   });
 
+  // Role effectif vu par l'UI : ADMIN/OWNER orga → OWNER ; DEV orga →
+  // max(EDITOR implicite, membership explicite) ; sinon membership ou
+  // VIEWER par defaut.
+  const VAULT_RANK = { VIEWER: 1, EDITOR: 2, OWNER: 3 } as const;
+  function effectiveRole(memberRole: "OWNER" | "EDITOR" | "VIEWER" | undefined) {
+    if (isOrgAdmin) return "OWNER" as const;
+    if (orgRole === "DEV") {
+      if (!memberRole) return "EDITOR" as const;
+      return VAULT_RANK[memberRole] >= VAULT_RANK.EDITOR
+        ? memberRole
+        : ("EDITOR" as const);
+    }
+    return memberRole ?? ("VIEWER" as const);
+  }
+
   return NextResponse.json({
     collections: collections.map((c) => ({
       id: c.id,
@@ -50,15 +68,14 @@ export async function GET(_req: Request, { params }: Params) {
       updatedAt: c.updatedAt,
       entryCount: c._count.entries,
       memberCount: c._count.members,
-      // role effectif vu par le user pour l'UI (badge OWNER/EDITOR/VIEWER)
-      role: isAdmin ? "OWNER" : (c.members[0]?.role ?? "VIEWER"),
+      role: effectiveRole(c.members[0]?.role),
     })),
   });
 }
 
 export async function POST(req: Request, { params }: Params) {
   const { orgSlug } = await params;
-  const scope = await requireOrgScope(orgSlug, "ADMIN");
+  const scope = await requireOrgScope(orgSlug, "DEV");
   if ("error" in scope) return scope.error;
 
   const body = (await readJson(req)) as { name?: string } | null;
@@ -91,11 +108,23 @@ export async function POST(req: Request, { params }: Params) {
     );
   }
 
+  // Pour un DEV createur, on ajoute un TeamVaultMember OWNER explicite :
+  // sans ca il n'aurait que l'EDITOR implicite (cf. lib/vault-access.ts)
+  // et ne pourrait ni renommer ni supprimer sa propre collection. Pour
+  // ADMIN/OWNER orga, c'est inutile (OWNER deja implicite a tous niveaux).
+  const isOrgAdmin = scope.orgRole === "ADMIN" || scope.orgRole === "OWNER";
   const created = await prisma.teamVaultCollection.create({
     data: {
       organizationId: scope.organizationId,
       name,
       slug,
+      ...(isOrgAdmin
+        ? {}
+        : {
+            members: {
+              create: { userId: scope.user.id, role: "OWNER" },
+            },
+          }),
     },
     select: {
       id: true,
@@ -103,6 +132,7 @@ export async function POST(req: Request, { params }: Params) {
       slug: true,
       createdAt: true,
       updatedAt: true,
+      _count: { select: { members: true } },
     },
   });
 
@@ -117,7 +147,18 @@ export async function POST(req: Request, { params }: Params) {
   });
 
   return NextResponse.json(
-    { collection: { ...created, role: "OWNER", entryCount: 0, memberCount: 0 } },
+    {
+      collection: {
+        id: created.id,
+        name: created.name,
+        slug: created.slug,
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+        role: "OWNER",
+        entryCount: 0,
+        memberCount: created._count.members,
+      },
+    },
     { status: 201 },
   );
 }

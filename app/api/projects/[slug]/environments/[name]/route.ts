@@ -13,9 +13,11 @@ type Params = { params: Promise<{ slug: string; name: string }> };
  * Update an environment. Body fields are all optional :
  *   { name?: string, url?: string | null, dockerCompose?: string | null }
  *
- * Renaming an env (`name` change) requires OWNER, since it can break any
- * deploy script using the old env name in the Bearer endpoint URL. Other
- * updates require EDITOR.
+ * EDITOR+ requis (y compris pour le rename). Le rename peut casser des
+ * deploy scripts qui utilisent l'ancien nom dans l'URL Bearer endpoint —
+ * c'est au DEV/EDITOR qui rename de mettre a jour les references
+ * externes (cf. politique RBAC settings projet : tout est ouvert a
+ * EDITOR+, seul le DELETE projet reste OWNER).
  */
 export async function PATCH(req: Request, { params }: Params) {
   const { slug, name } = await params;
@@ -37,8 +39,7 @@ export async function PATCH(req: Request, { params }: Params) {
     typeof body.name === "string" ? body.name.trim().toLowerCase() : undefined;
   const isRename = newName !== undefined && newName !== name;
 
-  // Rename = OWNER. Other patches = EDITOR.
-  const access = await requireProjectMember(slug, isRename ? "OWNER" : "EDITOR");
+  const access = await requireProjectMember(slug, "EDITOR");
   if ("error" in access) return access.error;
 
   const env = await prisma.environment.findUnique({

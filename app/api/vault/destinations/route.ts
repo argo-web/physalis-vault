@@ -19,7 +19,9 @@
 // Reglesd'inclusion :
 //   - Orgs : user est OrgMember (n'importe quel role).
 //   - Projets : user est ProjectMember direct OU OrgADMIN+ de l'org du
-//     projet (heritage transitif).
+//     projet (OWNER implicite) OU OrgDEV de l'org (EDITOR implicite).
+//     Un ProjectMember explicite ne se fait jamais ecraser par l'implicite
+//     (cf. lib/vault-access.ts : meme regle partout).
 //   - Collections : seules celles ou le user est >= EDITOR sont listees
 //     (pre-requis pour ecrire). Liste vide si rien dispo a ce role.
 
@@ -82,12 +84,19 @@ export async function GET() {
   const adminOrgIds = orgMemberships
     .filter((m) => m.role === "OWNER" || m.role === "ADMIN")
     .map((m) => m.organization.id);
+  const devOrgIds = orgMemberships
+    .filter((m) => m.role === "DEV")
+    .map((m) => m.organization.id);
+  const adminOrgIdSet = new Set(adminOrgIds);
 
-  // 2. Projets accessibles via OrgADMIN+ (heritage), en plus des projets
-  // membres directs.
-  const inheritedProjects = adminOrgIds.length
+  // 2. Projets accessibles via OrgADMIN+ (OWNER implicite) OU OrgDEV
+  // (EDITOR implicite), en plus des projets membres directs. Un
+  // ProjectMember explicite gagne sur l'implicite (la verif !has(p.id)
+  // ci-dessous preserve cet ordre).
+  const inheritOrgIds = [...adminOrgIds, ...devOrgIds];
+  const inheritedProjects = inheritOrgIds.length
     ? await prisma.project.findMany({
-        where: { organizationId: { in: adminOrgIds } },
+        where: { organizationId: { in: inheritOrgIds } },
         select: {
           id: true,
           slug: true,
@@ -125,7 +134,8 @@ export async function GET() {
         name: p.name,
         organizationId: p.organizationId,
         orgSlug: p.organization.slug,
-        role: "OWNER", // heritage OrgADMIN+ → OWNER implicite
+        // ADMIN/OWNER orga → OWNER implicite ; DEV orga → EDITOR implicite.
+        role: adminOrgIdSet.has(p.organizationId) ? "OWNER" : "EDITOR",
       });
     }
   }

@@ -109,7 +109,10 @@ export default function OrgPanels({
       ) : tab === "tokens" && canRead ? (
         <OrgTokensPanel slug={slug} />
       ) : (
-        <TeamVaultPanel scope={{ kind: "org", orgSlug: slug }} />
+        <TeamVaultPanel
+          scope={{ kind: "org", orgSlug: slug }}
+          canCreate={canRead}
+        />
       )}
 
       {settingsOpen && canManage && (

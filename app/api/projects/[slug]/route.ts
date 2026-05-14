@@ -43,7 +43,10 @@ const GITHUB_REPO_RE = /^[a-z0-9._-]+\/[a-z0-9._-]+$/i;
 
 export async function PATCH(req: Request, { params }: Params) {
   const { slug } = await params;
-  const access = await requireProjectMember(slug, "OWNER");
+  // Settings projet (name, slug, github config) : ouvert a EDITOR+ pour
+  // que les DEV puissent ajuster la config technique sans solliciter un
+  // OWNER. La suppression (DELETE) reste OWNER-only (destructif).
+  const access = await requireProjectMember(slug, "EDITOR");
   if ("error" in access) return access.error;
 
   const body = (await readJson(req)) as

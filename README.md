@@ -1,4 +1,4 @@
-> **⚠️ Pré-release — version 0.0.3**
+> **⚠️ Pré-release — version 0.1.0**
 >
 > Ce repo de self-host est en **cours de test** et n'a pas encore été
 > validé en production. L'API, le schéma de base de données et le flux
@@ -71,7 +71,7 @@ Un VPS secondaire reçoit chaque nuit une copie chiffrée de la base de données
 | Déploiements manuels ou semi-automatisés | Déploiements entièrement automatisés sans intervention humaine |
 
 
-📖 **Documentation technique complète** : [docs/secretvault.md](docs/secretvault.md)
+📖 **Documentation technique complète** : [docs/physalis.md](docs/physalis.md)
 🔒 **Audit sécurité** : [docs/security.md](docs/security.md)
 🗺️ **Roadmap** : [docs/todo.md](docs/todo.md)
 💾 **Backup & Failover** : [docs/todo-backup-failover.md](docs/todo-backup-failover.md) · [docs/doc-install-backup.md](docs/doc-install-backup.md)
@@ -109,7 +109,7 @@ npm run dev                                       # http://localhost:3000
 Déploiement automatique sur push `main` via [.github/workflows/deploy.yml](.github/workflows/deploy.yml) :
 test → build/push GHCR → SSH deploy + health check.
 
-Voir [docs/secretvault.md §10.3](docs/secretvault.md) pour le setup VPS initial
+Voir [docs/physalis.md §10.3](docs/physalis.md) pour le setup VPS initial
 (création du dossier, génération de la clé SSH dédiée au workflow, contenu de
 `.env`, secrets GitHub à créer).
 
@@ -133,7 +133,7 @@ Aucun secret GitHub n'est consommé. Clé SSH et registry creds vivent chiffrés
 dans le vault. Template prêt à coller : [docs/deploy-oidc.yml](docs/deploy-oidc.yml)
 (deploy avec rebuild) ou [docs/redeploy-oidc.yml](docs/redeploy-oidc.yml)
 (redeploy sans rebuild). Migration détaillée en
-[docs/secretvault.md §10.5](docs/secretvault.md).
+[docs/physalis.md §10.5](docs/physalis.md).
 
 ### Mode 2 — Bearer machine token (fallback hors GitHub)
 
@@ -208,4 +208,4 @@ npm run test:integ     # integ (bearer-auth, RBAC, DB encryption, headers,
                        #        rate-limit, 2FA, servers, policies, plugin)
 ```
 
-Voir [docs/secretvault.md §11](docs/secretvault.md) pour le détail.
+Voir [docs/physalis.md §11](docs/physalis.md) pour le détail.

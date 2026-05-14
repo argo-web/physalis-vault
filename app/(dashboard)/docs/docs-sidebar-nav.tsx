@@ -31,7 +31,7 @@ export default function DocsSidebarNav({ pages }: { pages: DocPage[] }) {
         </span>
         <span className="docs-nav-label">Accueil</span>
       </Link>
-      {pages.map((p, idx) => {
+      {pages.map((p) => {
         const active = activeSlug === p.slug;
         return (
           <Link
@@ -40,7 +40,6 @@ export default function DocsSidebarNav({ pages }: { pages: DocPage[] }) {
             className={`docs-nav-item${active ? " active" : ""}`}
             aria-current={active ? "page" : undefined}
           >
-            <span className="docs-nav-num">{String(idx + 1).padStart(2, "0")}</span>
             <span className="docs-nav-icon">
               <DocIcon name={p.icon} size={16} />
             </span>

@@ -6,13 +6,18 @@
 //   ┌─────────────┬──────────────────────────────────────────────────────────┐
 //   │ Scope org   │ • OrgADMIN / OrgOWNER → OWNER implicite                  │
 //   │             │ • global ADMIN → OWNER implicite                         │
-//   │             │ • TeamVaultMember explicite → role du member             │
+//   │             │ • OrgDEV → EDITOR implicite (peut consulter/éditer       │
+//   │             │   toutes les collections org ; OWNER seulement via       │
+//   │             │   TeamVaultMember explicite, p.ex. comme créateur)       │
+//   │             │ • TeamVaultMember explicite → role du member (max avec   │
+//   │             │   l'implicite ci-dessus)                                 │
 //   │             │ • Sinon → 404 (jamais 403, anti-leak)                    │
 //   ├─────────────┼──────────────────────────────────────────────────────────┤
 //   │ Scope projet│ • OrgADMIN / OrgOWNER de l'org du projet → OWNER         │
 //   │             │ • global ADMIN → OWNER                                   │
 //   │             │ • ProjectMember : VIEWER → VIEWER, EDITOR → EDITOR,      │
 //   │             │   OWNER → OWNER (mapping 1:1)                            │
+//   │             │ • OrgDEV sans ProjectMember → EDITOR implicite           │
 //   │             │ • Sinon → 404                                            │
 //   │             │ • TeamVaultMember sur ce type de collection : IGNORÉ     │
 //   │             │   (validation app-level refuse leur création)            │
@@ -61,12 +66,16 @@ export function hasVaultRole(actual: VaultRole, required: VaultRole): boolean {
 
 /**
  * Calcule l'ensemble des `TeamVaultCollection.id` accessibles a un user
- * en lecture (VIEWER ou plus). Combine les 4 voies d'acces :
+ * en lecture (VIEWER ou plus). Combine les voies d'acces :
  *   1. Global ADMIN → toutes les collections
  *   2. OrgADMIN/OWNER → toutes les collections org de cette org + toutes
  *      les collections projet des projets de cette org
- *   3. TeamVaultMember explicite (role quelconque) → la collection
- *   4. ProjectMember (role quelconque) → toutes les collections du projet
+ *   3. OrgDEV → toutes les collections org de cette org + toutes les
+ *      collections projet des projets de cette org (heritage transitif,
+ *      cf. requireProjectCollectionAccess : EDITOR implicite si pas de
+ *      ProjectMember explicite)
+ *   4. TeamVaultMember explicite (role quelconque) → la collection
+ *   5. ProjectMember (role quelconque) → toutes les collections du projet
  *
  * Utilise par /api/plugin/match pour agreger les coffres d'equipe dans
  * le bundle de l'extension. Ce helper ne fait PAS de match URL — c'est
@@ -90,14 +99,14 @@ export async function getAccessibleCollectionIds(
     }
 
     // Toutes les requetes en parallele.
-    const [direct, adminOrgs, projectMemberships] = await Promise.all([
+    const [direct, orgMemberships, projectMemberships] = await Promise.all([
       tx.teamVaultMember.findMany({
         where: { userId },
         select: { collectionId: true },
       }),
       tx.orgMember.findMany({
-        where: { userId, role: { in: ["ADMIN", "OWNER"] } },
-        select: { organizationId: true },
+        where: { userId, role: { in: ["DEV", "ADMIN", "OWNER"] } },
+        select: { organizationId: true, role: true },
       }),
       tx.projectMember.findMany({
         where: { userId },
@@ -105,7 +114,12 @@ export async function getAccessibleCollectionIds(
       }),
     ]);
 
-    const adminOrgIds = adminOrgs.map((o) => o.organizationId);
+    // Tous les roles (DEV/ADMIN/OWNER) donnent acces aux collections org
+    // de l'org. Pour les collections projet, l'heritage transitif depuis
+    // l'org concerne aussi DEV (EDITOR implicite) ET ADMIN/OWNER (OWNER
+    // implicite) — un user explicitement ProjectMember reste pris en
+    // compte separement via la branche projectMemberIds.
+    const orgScopeOrgIds = orgMemberships.map((o) => o.organizationId);
     const projectMemberIds = projectMemberships.map((p) => p.projectId);
 
     const collections = await tx.teamVaultCollection.findMany({
@@ -113,21 +127,25 @@ export async function getAccessibleCollectionIds(
         OR: [
           // 1. Membership direct sur la collection (via TeamVaultMember)
           { id: { in: direct.map((d) => d.collectionId) } },
-          // 2. Collections org dont l'user est OrgADMIN/OWNER
-          ...(adminOrgIds.length > 0
-            ? [{ organizationId: { in: adminOrgIds } }]
+          // 2. Collections org dont l'user est OrgDEV/ADMIN/OWNER
+          ...(orgScopeOrgIds.length > 0
+            ? [{ organizationId: { in: orgScopeOrgIds } }]
             : []),
           // 3. Collections projet dont l'user est ProjectMember (any role)
           ...(projectMemberIds.length > 0
             ? [{ projectId: { in: projectMemberIds } }]
             : []),
           // 4. Collections projet dont le projet appartient a une org ou
-          //    l'user est OrgADMIN/OWNER (heritage transitif)
-          ...(adminOrgIds.length > 0
+          //    l'user est OrgDEV/ADMIN/OWNER (heritage transitif). Un
+          //    ProjectMember=VIEWER explicite obtient quand meme VIEWER
+          //    via la branche 3 (qui shadow l'EDITOR implicite, mais ici
+          //    on s'en moque : on ne calcule que la VISIBILITE, pas le
+          //    role effectif).
+          ...(orgScopeOrgIds.length > 0
             ? [
                 {
                   projectId: { not: null },
-                  project: { organizationId: { in: adminOrgIds } },
+                  project: { organizationId: { in: orgScopeOrgIds } },
                 } as const,
               ]
             : []),
@@ -194,19 +212,27 @@ export async function requireOrgCollectionAccess(
     };
   }
 
-  // Calcul du role effectif : org admin/owner OU global admin → OWNER
-  // implicite ; sinon role TeamVaultMember si present.
+  // Calcul du role effectif : on combine un role implicite derive de
+  // l'OrgRole (ADMIN/OWNER → OWNER, DEV → EDITOR) avec un eventuel
+  // TeamVaultMember explicite. On prend le max des deux, ce qui permet
+  // qu'un DEV creator devienne OWNER de sa propre collection via un
+  // TeamVaultMember explicite ajoute a la creation.
   const orgRole = org.members[0]?.role;
+  const implicit: VaultRole | null =
+    isPlatformAdmin(user.role) || orgRole === "OWNER" || orgRole === "ADMIN"
+      ? "OWNER"
+      : orgRole === "DEV"
+        ? "EDITOR"
+        : null;
+  const memberRole = collection.members[0]?.role ?? null;
   let effective: VaultRole | null = null;
-  if (
-    isPlatformAdmin(user.role) ||
-    orgRole === "OWNER" ||
-    orgRole === "ADMIN"
-  ) {
-    effective = "OWNER";
+  if (implicit && memberRole) {
+    effective =
+      VAULT_ROLE_RANK[implicit] >= VAULT_ROLE_RANK[memberRole]
+        ? implicit
+        : memberRole;
   } else {
-    const memberRole = collection.members[0]?.role;
-    if (memberRole) effective = memberRole;
+    effective = implicit ?? memberRole;
   }
 
   if (!effective || !hasVaultRole(effective, requiredRole)) {
@@ -290,7 +316,17 @@ export async function requireProjectCollectionAccess(
     };
   }
 
-  // Calcul du role projet effectif (cf. requireProjectMember dans lib/api.ts).
+  // Calcul du role projet effectif. Doit rester en sync avec :
+  //   - requireProjectMember dans lib/api.ts
+  //   - projects/[slug]/page.tsx (RBAC effectif affiche)
+  //   - requireProjectScope plus bas dans ce fichier
+  //
+  // Mapping :
+  //   1. Global ADMIN / OrgADMIN / OrgOWNER → OWNER implicite
+  //   2. ProjectMember explicite → role du member (mapping 1:1 vers Vault)
+  //   3. Pas de row + OrgDEV → EDITOR implicite (les DEV peuvent operer
+  //      sur tous les projets de leur org sauf restriction explicite)
+  //   4. Sinon → null → 404
   const projectRole = project.members[0]?.role;
   const orgRole = project.organization.members[0]?.role;
 
@@ -303,6 +339,8 @@ export async function requireProjectCollectionAccess(
     effective = "OWNER";
   } else if (projectRole) {
     effective = PROJECT_TO_VAULT[projectRole];
+  } else if (orgRole === "DEV") {
+    effective = "EDITOR";
   }
 
   if (!effective || !hasVaultRole(effective, requiredRole)) {
@@ -424,6 +462,8 @@ export async function requireProjectScope(
   const projectRole = project.members[0]?.role;
   const orgRole = project.organization.members[0]?.role;
 
+  // Mapping aligne avec requireProjectMember (lib/api.ts) et page.tsx :
+  // OrgDEV sans ProjectMember explicite obtient EDITOR implicite.
   let effective: ProjectRole | null = null;
   if (
     isPlatformAdmin(user.role) ||
@@ -433,6 +473,8 @@ export async function requireProjectScope(
     effective = "OWNER";
   } else if (projectRole) {
     effective = projectRole;
+  } else if (orgRole === "DEV") {
+    effective = "EDITOR";
   }
 
   if (!effective || PROJECT_RANK[effective] < PROJECT_RANK[requiredRole]) {

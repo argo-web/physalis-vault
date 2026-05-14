@@ -63,49 +63,29 @@ export default function AccessPanel({
 }
 
 function EnvCardsSection({ environments }: { environments: EnvSummary[] }) {
+  // On n'affiche que les environnements ayant une URL configuree. Ceux
+  // sans URL (env "interne", config en cours) ne sont pas pertinents
+  // dans l'onglet Acces qui sert a ouvrir les apps deployees.
+  const visible = environments.filter((e) => Boolean(e.url));
+  if (visible.length === 0) return null;
   return (
     <section>
       <div className="section-header">
         <h2 className="section-title">Environnements</h2>
       </div>
       <div className="env-grid">
-        {environments.map((env) => {
-          const hasUrl = Boolean(env.url);
-          const inner = (
-            <>
-              <div className="env-name">{envDisplay(env.name)}</div>
-              {hasUrl ? (
-                <div className="env-url">{env.url}</div>
-              ) : (
-                <div className="env-url text-muted" style={{ fontStyle: "italic" }}>
-                  URL non configurée
-                </div>
-              )}
-            </>
-          );
-          if (hasUrl) {
-            return (
-              <a
-                key={env.id}
-                href={env.url ?? "#"}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="card card-link env-card"
-              >
-                {inner}
-              </a>
-            );
-          }
-          return (
-            <div
-              key={env.id}
-              className="card env-card"
-              style={{ borderStyle: "dashed", opacity: 0.6 }}
-            >
-              {inner}
-            </div>
-          );
-        })}
+        {visible.map((env) => (
+          <a
+            key={env.id}
+            href={env.url ?? "#"}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="card card-link env-card"
+          >
+            <div className="env-name">{envDisplay(env.name)}</div>
+            <div className="env-url">{env.url}</div>
+          </a>
+        ))}
       </div>
     </section>
   );

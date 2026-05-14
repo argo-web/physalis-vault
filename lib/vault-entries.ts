@@ -51,6 +51,10 @@ export type EntryPatchBody = {
   totpSecret?: string | null;
   tags?: unknown;
   favorite?: boolean;
+  /** Deplace l'entry vers une autre TeamVaultCollection du MEME scope
+   *  (org→org dans la meme org, project→project dans le meme projet).
+   *  RBAC : EDITOR+ requis sur la collection cible. */
+  targetCollectionId?: string;
 };
 
 /**
@@ -176,6 +180,7 @@ export function validateEntryPatch(body: EntryPatchBody | null):
         totpSecret: string | null; // null = effacer, string = re-encrypt
         tags: string[];
         favorite: boolean;
+        targetCollectionId: string;
       }>;
       changed: string[];
     }
@@ -195,6 +200,7 @@ export function validateEntryPatch(body: EntryPatchBody | null):
     totpSecret: string | null;
     tags: string[];
     favorite: boolean;
+    targetCollectionId: string;
   }> = {};
   const changed: string[] = [];
 
@@ -297,6 +303,20 @@ export function validateEntryPatch(body: EntryPatchBody | null):
   if (typeof body.favorite === "boolean") {
     data.favorite = body.favorite;
     changed.push("favorite");
+  }
+  if (typeof body.targetCollectionId === "string") {
+    const v = body.targetCollectionId.trim();
+    if (!v) {
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: "targetCollectionId must be a non-empty string" },
+          { status: 400 },
+        ),
+      };
+    }
+    data.targetCollectionId = v;
+    changed.push("collection");
   }
 
   return { ok: true, data, changed };

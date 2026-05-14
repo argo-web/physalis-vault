@@ -61,8 +61,8 @@ export default function SettingsDialog({
   }, [orgSlug]);
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog dialog-lg" onClick={(e) => e.stopPropagation()}>
+    <div className="dialog-overlay">
+      <div className="dialog dialog-lg">
         <div className="dialog-header">
           <h2 className="dialog-title">Paramètres du projet</h2>
           <button

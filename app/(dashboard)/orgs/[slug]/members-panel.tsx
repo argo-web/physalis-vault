@@ -61,6 +61,12 @@ export default function OrgMembersPanel({
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [roleInfoOpen, setRoleInfoOpen] = useState(false);
   const [candidateUserId, setCandidateUserId] = useState<string>("");
+  // Feedback par invitation pour le bouton "Renvoyer" : "sent" pendant 5s
+  // (coche verte), puis "cooldown" 5s (bouton disabled) avant retour normal.
+  // Map par id pour ne pas bloquer les autres lignes.
+  const [resendFeedback, setResendFeedback] = useState<
+    Record<string, "sent" | "cooldown">
+  >({});
 
   const reload = useCallback(async () => {
     setError(null);
@@ -160,6 +166,55 @@ export default function OrgMembersPanel({
       return;
     }
     reload();
+  }
+
+  function resendInvitation(invitationId: string) {
+    setError(null);
+    startTransition(async () => {
+      const res = await fetch(
+        `/api/orgs/${slug}/invitations/${invitationId}/resend`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(data?.error ?? "Renvoi impossible.");
+        return;
+      }
+      // Feedback : ✓ pendant 5s, puis cooldown 5s, puis retour normal.
+      setResendFeedback((f) => ({ ...f, [invitationId]: "sent" }));
+      setTimeout(() => {
+        setResendFeedback((f) => ({ ...f, [invitationId]: "cooldown" }));
+        setTimeout(() => {
+          setResendFeedback((f) => {
+            const next = { ...f };
+            delete next[invitationId];
+            return next;
+          });
+        }, 5000);
+      }, 5000);
+      reload();
+    });
+  }
+
+  function deleteInvitation(invitationId: string, email: string) {
+    if (!confirm(`Supprimer l'invitation envoyée à ${email} ?`)) return;
+    setError(null);
+    startTransition(async () => {
+      const res = await fetch(
+        `/api/orgs/${slug}/invitations/${invitationId}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setError(data?.error ?? "Suppression impossible.");
+        return;
+      }
+      reload();
+    });
   }
 
   return (
@@ -370,37 +425,99 @@ export default function OrgMembersPanel({
             <h2 className="section-title">Invitations en attente</h2>
           </div>
           <div className="row-list">
-            {invitations.map((inv) => (
-              <div key={inv.id} className="row">
-                <div className="row-icon">
-                  {inv.inviteeUserId ? "📨" : initials(inv.email)}
-                </div>
-                <div className="row-info">
-                  <div className="row-name">
-                    {inv.email}
-                    {inv.inviteeUserId && (
-                      <span
-                        className="chip"
-                        style={{ marginLeft: 6, fontSize: 10 }}
-                        title="Invitation in-app (l'user verra sur son dashboard)"
-                      >
-                        in-app
+            {invitations.map((inv) => {
+              const expired = new Date(inv.expiresAt).getTime() < Date.now();
+              return (
+                <div key={inv.id} className="row">
+                  <div className="row-icon">
+                    {inv.inviteeUserId ? "📨" : initials(inv.email)}
+                  </div>
+                  <div className="row-info">
+                    <div className="row-name">
+                      {inv.email}
+                      {inv.inviteeUserId && (
+                        <span
+                          className="chip"
+                          style={{ marginLeft: 6, fontSize: 10 }}
+                          title="Invitation in-app (l'user verra sur son dashboard)"
+                        >
+                          in-app
+                        </span>
+                      )}
+                      {expired && (
+                        <span
+                          className="chip"
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 10,
+                            background: "var(--danger-bg)",
+                            color: "var(--danger-fg)",
+                          }}
+                          title="Le lien d'invitation a expiré — utilise « Renvoyer » pour en générer un nouveau"
+                        >
+                          expirée
+                        </span>
+                      )}
+                    </div>
+                    <div className="row-meta">
+                      <span className={`role role-${inv.role.toLowerCase()}`}>
+                        {inv.role}
                       </span>
-                    )}
+                      <span>· invitée par {inv.invitedBy.email}</span>
+                      <span>
+                        · {expired ? "a expiré le" : "expire le"}{" "}
+                        {new Date(inv.expiresAt).toLocaleDateString()}
+                      </span>
+                    </div>
                   </div>
-                  <div className="row-meta">
-                    <span className={`role role-${inv.role.toLowerCase()}`}>
-                      {inv.role}
-                    </span>
-                    <span>· invitée par {inv.invitedBy.email}</span>
-                    <span>
-                      · expire le{" "}
-                      {new Date(inv.expiresAt).toLocaleDateString()}
-                    </span>
-                  </div>
+                  {canManage && (
+                    <div className="row-actions">
+                      {(() => {
+                        const fb = resendFeedback[inv.id];
+                        const isSent = fb === "sent";
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => resendInvitation(inv.id)}
+                            disabled={pending || fb !== undefined}
+                            className="btn btn-ghost btn-xs"
+                            style={
+                              isSent
+                                ? {
+                                    background: "var(--success)",
+                                    color: "#fff",
+                                    borderColor: "var(--success)",
+                                    opacity: 1,
+                                  }
+                                : undefined
+                            }
+                            title={
+                              inv.inviteeUserId
+                                ? "Régénère le lien et prolonge l'expiration (in-app, pas d'email)"
+                                : "Régénère le lien, prolonge l'expiration et renvoie l'email"
+                            }
+                          >
+                            {isSent
+                              ? "✓ Envoyé"
+                              : fb === "cooldown"
+                                ? "Envoyé"
+                                : "Renvoyer"}
+                          </button>
+                        );
+                      })()}
+                      <button
+                        type="button"
+                        onClick={() => deleteInvitation(inv.id, inv.email)}
+                        disabled={pending}
+                        className="btn btn-danger btn-xs"
+                      >
+                        Supprimer
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}

@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 // Route session-based (requireEnvironment → tenant context entré) →
 // utilise le strict prisma qui auto-route via search_path.
 import { prisma } from "@/lib/prisma";
-import { decrypt } from "@/lib/crypto";
-import { readJson, requireEnvironment } from "@/lib/api";
+import { decrypt, encrypt } from "@/lib/crypto";
+import { isValidSecretKey, readJson, requireEnvironment } from "@/lib/api";
 import { isValidCategory } from "@/lib/categories";
 import { logAction } from "@/lib/audit";
 import { normalizeTags, TAG_VALIDATION_ERROR } from "@/lib/tags";
+import { createSecretVersion } from "@/lib/versioning";
 
 type Params = { params: Promise<{ slug: string; env: string; key: string }> };
 
@@ -47,9 +48,15 @@ export async function GET(req: Request, { params }: Params) {
 }
 
 /**
- * PATCH partiel — pour l'instant uniquement la categorie. Permet de
- * recategoriser un secret depuis la liste sans avoir a re-saisir sa
- * valeur (ce que ferait POST upsert). N'effectue pas de decrypt/re-encrypt.
+ * PATCH partiel. Tous les champs sont optionnels et ne sont modifies
+ * que s'ils sont presents dans le body :
+ *   - category / tags : metadata pure, pas de re-encrypt
+ *   - value          : re-encrypt + cree une SecretVersion snapshot
+ *                       (parite avec POST upsert)
+ *   - newKey         : renomme la cle (verification d'unicite dans l'env)
+ *
+ * Si le body est vide → no-op silencieux. Permet a l'UI d'envoyer "ce
+ * que l'user a touche" sans craindre d'ecraser des champs intacts.
  */
 export async function PATCH(req: Request, { params }: Params) {
   const { slug, env, key } = await params;
@@ -57,11 +64,22 @@ export async function PATCH(req: Request, { params }: Params) {
   if ("error" in access) return access.error;
 
   const body = (await readJson(req)) as
-    | { category?: string | null; tags?: string[] }
+    | {
+        category?: string | null;
+        tags?: string[];
+        value?: string;
+        newKey?: string;
+      }
     | null;
-  if (!body || (!("category" in body) && !("tags" in body))) {
+  if (
+    !body ||
+    (!("category" in body) &&
+      !("tags" in body) &&
+      !("value" in body) &&
+      !("newKey" in body))
+  ) {
     return NextResponse.json(
-      { error: "category or tags is required" },
+      { error: "at least one of category, tags, value, newKey is required" },
       { status: 400 },
     );
   }
@@ -70,13 +88,28 @@ export async function PATCH(req: Request, { params }: Params) {
     where: {
       environmentId_key: { environmentId: access.environment.id, key },
     },
-    select: { id: true, key: true, category: true, tags: true },
+    select: {
+      id: true,
+      key: true,
+      category: true,
+      tags: true,
+      encryptedValue: true,
+      iv: true,
+      tag: true,
+    },
   });
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const data: { category?: string | null; tags?: string[] } = {};
+  const data: {
+    category?: string | null;
+    tags?: string[];
+    key?: string;
+    encryptedValue?: string;
+    iv?: string;
+    tag?: string;
+  } = {};
   const changed: string[] = [];
 
   if ("category" in body) {
@@ -111,6 +144,47 @@ export async function PATCH(req: Request, { params }: Params) {
     }
   }
 
+  // newKey : rename avec verification d'unicite + format
+  if ("newKey" in body && typeof body.newKey === "string") {
+    const nk = body.newKey.trim();
+    if (nk !== existing.key) {
+      if (!isValidSecretKey(nk)) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid key (must match [A-Z][A-Z0-9_]{0,127}, e.g. DATABASE_URL)",
+          },
+          { status: 400 },
+        );
+      }
+      const conflict = await prisma.secret.findUnique({
+        where: {
+          environmentId_key: { environmentId: access.environment.id, key: nk },
+        },
+        select: { id: true },
+      });
+      if (conflict) {
+        return NextResponse.json(
+          { error: "A secret with this key already exists in this environment" },
+          { status: 409 },
+        );
+      }
+      data.key = nk;
+      changed.push("key");
+    }
+  }
+
+  // value : re-encrypt + version snapshot (parite avec POST upsert)
+  let mustSnapshot = false;
+  if ("value" in body && typeof body.value === "string" && body.value !== "") {
+    const payload = encrypt(body.value);
+    data.encryptedValue = payload.encryptedValue;
+    data.iv = payload.iv;
+    data.tag = payload.tag;
+    changed.push("value");
+    mustSnapshot = true;
+  }
+
   if (changed.length === 0) {
     // No-op : pas de write, pas d'audit log inutile.
     return NextResponse.json({
@@ -122,11 +196,28 @@ export async function PATCH(req: Request, { params }: Params) {
     });
   }
 
-  const updated = await prisma.secret.update({
-    where: { id: existing.id },
-    data,
-    select: { key: true, category: true, tags: true, updatedAt: true },
-  });
+  // Snapshot atomique + update si la valeur change. Sinon update simple.
+  const updated = mustSnapshot
+    ? await prisma.$transaction(async (tx) => {
+        await createSecretVersion({
+          tx,
+          secretId: existing.id,
+          encryptedValue: existing.encryptedValue,
+          iv: existing.iv,
+          tag: existing.tag,
+          createdById: access.user.id,
+        });
+        return tx.secret.update({
+          where: { id: existing.id },
+          data,
+          select: { key: true, category: true, tags: true, updatedAt: true },
+        });
+      })
+    : await prisma.secret.update({
+        where: { id: existing.id },
+        data,
+        select: { key: true, category: true, tags: true, updatedAt: true },
+      });
 
   logAction({
     action: "SECRET_UPDATE",
@@ -136,8 +227,11 @@ export async function PATCH(req: Request, { params }: Params) {
     environmentId: access.environment.id,
     targetType: "Secret",
     targetId: existing.id,
-    secretKey: existing.key,
-    metadata: { changedFields: changed },
+    secretKey: updated.key,
+    metadata: {
+      changedFields: changed,
+      ...(data.key ? { previousKey: existing.key, newKey: data.key } : {}),
+    },
     req,
   });
 

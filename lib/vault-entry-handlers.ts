@@ -4,10 +4,12 @@
 // validation, le chiffrement et l'audit.
 
 import { NextResponse } from "next/server";
+import type { ProjectRole, VaultRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { readJson } from "@/lib/api";
 import { logAction } from "@/lib/audit";
+import { isPlatformAdmin } from "@/lib/roles";
 import {
   validateEntryCreate,
   validateEntryPatch,
@@ -15,6 +17,19 @@ import {
   type EntryPatchBody,
 } from "@/lib/vault-entries";
 import { hasVaultRole, type CollectionAccess } from "@/lib/vault-access";
+
+// Rangs locaux pour le calcul du role effectif sur une collection cible
+// (move entre collections). Doit rester en sync avec lib/vault-access.ts.
+const VAULT_RANK_LOCAL: Record<VaultRole, number> = {
+  VIEWER: 1,
+  EDITOR: 2,
+  OWNER: 3,
+};
+const PROJECT_TO_VAULT_LOCAL: Record<ProjectRole, VaultRole> = {
+  VIEWER: "VIEWER",
+  EDITOR: "EDITOR",
+  OWNER: "OWNER",
+};
 
 const ENTRY_LIST_FIELDS = {
   id: true,
@@ -283,6 +298,129 @@ export async function patchEntry(
   if (v.data.tags !== undefined) data.tags = v.data.tags;
   if (v.data.favorite !== undefined) data.favorite = v.data.favorite;
 
+  // ─── Move vers une autre collection (same-scope) ────────────────────
+  // Si targetCollectionId est present ET different de la collection
+  // courante, on resout l'access sur la cible et on ajoute collectionId
+  // dans le data. Contraintes :
+  //   - Meme scope (org→org dans la meme org, project→project meme projet)
+  //   - EDITOR+ requis sur la cible (calcul aligne avec les fonctions
+  //     requireOrgCollectionAccess / requireProjectCollectionAccess
+  //     dans lib/vault-access.ts)
+  let movedFromCollectionId: string | null = null;
+  if (
+    v.data.targetCollectionId &&
+    v.data.targetCollectionId !== access.collection.id
+  ) {
+    const sourceIsOrg = access.collection.organizationId !== null;
+    const sourceIsProject = access.collection.projectId !== null;
+
+    const target = await prisma.teamVaultCollection.findUnique({
+      where: { id: v.data.targetCollectionId },
+      select: {
+        id: true,
+        organizationId: true,
+        projectId: true,
+        organization: {
+          select: {
+            members: {
+              where: { userId: access.user.id },
+              select: { role: true },
+            },
+          },
+        },
+        project: {
+          select: {
+            members: {
+              where: { userId: access.user.id },
+              select: { role: true },
+            },
+            organization: {
+              select: {
+                members: {
+                  where: { userId: access.user.id },
+                  select: { role: true },
+                },
+              },
+            },
+          },
+        },
+        members: {
+          where: { userId: access.user.id },
+          select: { role: true },
+        },
+      },
+    });
+    // 404 (anti-leak) si la cible n'existe pas OU si elle n'est pas dans
+    // le meme scope que la source.
+    if (!target) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (
+      sourceIsOrg &&
+      target.organizationId !== access.collection.organizationId
+    ) {
+      return NextResponse.json(
+        { error: "Target collection must be in the same organization" },
+        { status: 400 },
+      );
+    }
+    if (
+      sourceIsProject &&
+      target.projectId !== access.collection.projectId
+    ) {
+      return NextResponse.json(
+        { error: "Target collection must be in the same project" },
+        { status: 400 },
+      );
+    }
+
+    // Calcul du role effectif sur la cible.
+    let targetRole: VaultRole | null = null;
+    if (sourceIsOrg) {
+      const orgRole = target.organization?.members[0]?.role;
+      const implicit: VaultRole | null =
+        isPlatformAdmin(access.user.role) ||
+        orgRole === "OWNER" ||
+        orgRole === "ADMIN"
+          ? "OWNER"
+          : orgRole === "DEV"
+            ? "EDITOR"
+            : null;
+      const memberRole = target.members[0]?.role ?? null;
+      if (implicit && memberRole) {
+        targetRole =
+          VAULT_RANK_LOCAL[implicit] >= VAULT_RANK_LOCAL[memberRole]
+            ? implicit
+            : memberRole;
+      } else {
+        targetRole = implicit ?? memberRole;
+      }
+    } else if (sourceIsProject) {
+      const projectRole = target.project?.members[0]?.role;
+      const orgRole = target.project?.organization?.members[0]?.role;
+      if (
+        isPlatformAdmin(access.user.role) ||
+        orgRole === "OWNER" ||
+        orgRole === "ADMIN"
+      ) {
+        targetRole = "OWNER";
+      } else if (projectRole) {
+        targetRole = PROJECT_TO_VAULT_LOCAL[projectRole];
+      } else if (orgRole === "DEV") {
+        // Aligne avec requireProjectCollectionAccess : OrgDEV sans
+        // ProjectMember explicite obtient EDITOR implicite.
+        targetRole = "EDITOR";
+      }
+    }
+
+    if (!targetRole || !hasVaultRole(targetRole, "EDITOR")) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    movedFromCollectionId = access.collection.id;
+    (data as typeof data & { collectionId?: string }).collectionId = target.id;
+  }
+
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ ok: true });
   }
@@ -304,6 +442,12 @@ export async function patchEntry(
       source: inferSource(access),
       collectionId: access.collection.id,
       changedFields: v.changed,
+      ...(movedFromCollectionId !== null
+        ? {
+            movedFromCollectionId,
+            movedToCollectionId: v.data.targetCollectionId,
+          }
+        : {}),
     },
     req,
   });

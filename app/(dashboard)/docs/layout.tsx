@@ -6,20 +6,14 @@
 
 import type { ReactNode } from "react";
 import { listDocPages } from "@/lib/docs";
-import DocsSidebarNav from "./docs-sidebar-nav";
+import DocsSidebar from "./docs-sidebar";
 
 export default async function DocsLayout({ children }: { children: ReactNode }) {
   const pages = await listDocPages();
   return (
     <div className="page">
       <div className="page-content docs-shell">
-        <aside className="docs-sidebar">
-          <div className="docs-sidebar-eyebrow">Documentation</div>
-          <div className="docs-sidebar-count">
-            {pages.length} sections
-          </div>
-          <DocsSidebarNav pages={pages} />
-        </aside>
+        <DocsSidebar pages={pages} />
         <div className="docs-main">{children}</div>
       </div>
     </div>

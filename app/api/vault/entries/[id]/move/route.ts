@@ -33,6 +33,21 @@ const PROJECT_TO_VAULT = {
   OWNER: "OWNER" as VaultRole,
 };
 
+const VAULT_RANK: Record<VaultRole, number> = {
+  VIEWER: 1,
+  EDITOR: 2,
+  OWNER: 3,
+};
+
+function maxVaultRole(
+  a: VaultRole | null,
+  b: VaultRole | null,
+): VaultRole | null {
+  if (!a) return b;
+  if (!b) return a;
+  return VAULT_RANK[a] >= VAULT_RANK[b] ? a : b;
+}
+
 type MoveBody = {
   target?: "team_org" | "team_project";
   orgSlug?: string;
@@ -87,12 +102,17 @@ async function resolveTarget(
     });
     if (!collection) return null;
     const orgRole = org.members[0]?.role;
-    let role: VaultRole | null = null;
-    if (isPlatformAdmin(userRole) || orgRole === "OWNER" || orgRole === "ADMIN") {
-      role = "OWNER";
-    } else {
-      role = collection.members[0]?.role ?? null;
-    }
+    // Meme logique que lib/vault-access.ts#requireOrgCollectionAccess :
+    // role implicite (ADMIN/OWNER → OWNER, DEV → EDITOR) combine avec
+    // un eventuel TeamVaultMember explicite, on prend le max.
+    const implicit: VaultRole | null =
+      isPlatformAdmin(userRole) || orgRole === "OWNER" || orgRole === "ADMIN"
+        ? "OWNER"
+        : orgRole === "DEV"
+          ? "EDITOR"
+          : null;
+    const memberRole = collection.members[0]?.role ?? null;
+    const role = maxVaultRole(implicit, memberRole);
     if (!role) return null;
     return {
       collectionId: collection.id,
@@ -138,11 +158,16 @@ async function resolveTarget(
     if (!collection) return null;
     const projectRole = project.members[0]?.role;
     const orgRole = project.organization.members[0]?.role;
+    // Mapping aligne avec lib/vault-access.ts#requireProjectCollectionAccess :
+    // OrgDEV sans ProjectMember explicite obtient EDITOR implicite (peut
+    // donc deplacer un secret perso vers une collection projet).
     let role: VaultRole | null = null;
     if (isPlatformAdmin(userRole) || orgRole === "OWNER" || orgRole === "ADMIN") {
       role = "OWNER";
     } else if (projectRole) {
       role = PROJECT_TO_VAULT[projectRole];
+    } else if (orgRole === "DEV") {
+      role = "EDITOR";
     }
     if (!role) return null;
     return {

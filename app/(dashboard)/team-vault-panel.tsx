@@ -1,8 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { RiFolderOpenLine, RiShuffleLine } from "@remixicon/react";
+import {
+  RiDownload2Line,
+  RiFolderOpenLine,
+  RiShuffleLine,
+} from "@remixicon/react";
 import { generatePassword } from "@/lib/generate-password";
+import TeamVaultImportDialog from "./team-vault-import-dialog";
+import RenameCollectionDialog from "./rename-collection-dialog";
 
 type VaultRole = "OWNER" | "EDITOR" | "VIEWER";
 
@@ -55,7 +61,13 @@ function initials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-export default function TeamVaultPanel({ scope }: { scope: TeamVaultScope }) {
+export default function TeamVaultPanel({
+  scope,
+  canCreate,
+}: {
+  scope: TeamVaultScope;
+  canCreate: boolean;
+}) {
   const [collections, setCollections] = useState<Collection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
@@ -113,16 +125,18 @@ export default function TeamVaultPanel({ scope }: { scope: TeamVaultScope }) {
       <div className="section-header">
         <p className="help" style={{ marginRight: 12 }}>
           {scope.kind === "org"
-            ? "Coffres partagés au niveau de l'organisation. Membres gérés par collection (OWNER/EDITOR/VIEWER). OrgADMIN+ ont accès OWNER implicite."
+            ? "Coffres partagés au niveau de l'organisation. Membres gérés par collection (OWNER/EDITOR/VIEWER). OrgADMIN+ ont accès OWNER implicite, OrgDEV a accès EDITOR implicite sur toutes les collections."
             : "Coffres partagés au niveau du projet. Droits hérités du RBAC projet (VIEWER/EDITOR/OWNER projet → même rôle sur les collections)."}
         </p>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="btn btn-primary btn-sm"
-        >
-          + Nouvelle collection
-        </button>
+        {canCreate && (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="btn btn-primary btn-sm"
+          >
+            + Nouvelle collection
+          </button>
+        )}
       </div>
 
       {creating && (
@@ -141,7 +155,11 @@ export default function TeamVaultPanel({ scope }: { scope: TeamVaultScope }) {
       ) : collections.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-title">Aucune collection</div>
-          <div>Cliquez sur « + Nouvelle collection » pour créer.</div>
+          <div>
+            {canCreate
+              ? "Cliquez sur « + Nouvelle collection » pour créer."
+              : "Aucune collection accessible pour le moment."}
+          </div>
         </div>
       ) : (
         <div className="row-list">
@@ -199,6 +217,7 @@ export default function TeamVaultPanel({ scope }: { scope: TeamVaultScope }) {
                 <CollectionDetail
                   scope={scope}
                   collection={c}
+                  allCollections={collections ?? []}
                   onDeleted={() => removeCollection(c)}
                   onChanged={reload}
                 />
@@ -262,11 +281,15 @@ function CreateCollectionForm({
 function CollectionDetail({
   scope,
   collection,
+  allCollections,
   onDeleted,
   onChanged,
 }: {
   scope: TeamVaultScope;
   collection: Collection;
+  /** Toutes les collections du meme scope (org ou projet), pour le
+   *  selecteur "deplacer vers une autre collection" dans EntryDialog. */
+  allCollections: Collection[];
   onDeleted: () => void;
   onChanged: () => void;
 }) {
@@ -274,13 +297,16 @@ function CollectionDetail({
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [showMembers, setShowMembers] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [editing, setEditing] = useState<Entry | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const canEdit = ROLE_RANK[collection.role] >= ROLE_RANK.EDITOR;
   const canManage = collection.role === "OWNER";
 
-  const entryBase = `${basePath(scope)}/${collection.slug}/entries`;
+  const collectionBase = `${basePath(scope)}/${collection.slug}`;
+  const entryBase = `${collectionBase}/entries`;
 
   const reload = useCallback(async () => {
     setError(null);
@@ -343,6 +369,10 @@ function CollectionDetail({
     onChanged();
   }
 
+  function renameCollection() {
+    setRenaming(true);
+  }
+
   return (
     <div
       style={{
@@ -362,6 +392,16 @@ function CollectionDetail({
               + Entrée
             </button>
           )}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setImporting(true)}
+              className="btn btn-ghost btn-sm"
+              title="Importer un fichier CSV (Bitwarden, Chrome, ou générique)"
+            >
+              <RiDownload2Line size={14} aria-hidden /> Importer CSV
+            </button>
+          )}
           {canManage && scope.kind === "org" && (
             <button
               type="button"
@@ -373,13 +413,23 @@ function CollectionDetail({
           )}
         </div>
         {canManage && (
-          <button
-            type="button"
-            onClick={onDeleted}
-            className="btn btn-danger btn-xs"
-          >
-            Supprimer la collection
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={renameCollection}
+              className="btn btn-ghost btn-xs"
+              title="Renommer la collection"
+            >
+              Renommer
+            </button>
+            <button
+              type="button"
+              onClick={onDeleted}
+              className="btn btn-danger btn-xs"
+            >
+              Supprimer la collection
+            </button>
+          </div>
         )}
       </div>
 
@@ -396,10 +446,48 @@ function CollectionDetail({
         />
       )}
 
+      {renaming && (
+        <RenameCollectionDialog
+          currentName={collection.name}
+          endpoint={collectionBase}
+          onClose={() => setRenaming(false)}
+          onRenamed={() => {
+            setRenaming(false);
+            // Le slug peut avoir change → le parent doit recharger la
+            // liste pour mettre a jour les liens / URLs.
+            onChanged();
+          }}
+        />
+      )}
+
+      {importing && (
+        <TeamVaultImportDialog
+          basePath={collectionBase}
+          onClose={() => setImporting(false)}
+          onImported={(count) => {
+            setImporting(false);
+            setError(
+              count > 0
+                ? `✓ ${count} entrée${count === 1 ? "" : "s"} importée${count === 1 ? "" : "s"}`
+                : "Aucune entrée importée.",
+            );
+            setTimeout(() => setError(null), 3000);
+            reload();
+            onChanged();
+          }}
+        />
+      )}
+
       {(adding || editing) && (
         <EntryDialog
           entryBase={entryBase}
           initial={editing}
+          currentCollectionId={collection.id}
+          movableCollections={allCollections.filter(
+            (c) =>
+              c.id !== collection.id &&
+              (c.role === "EDITOR" || c.role === "OWNER"),
+          )}
           onClose={() => {
             setAdding(false);
             setEditing(null);
@@ -612,7 +700,7 @@ function MembersSection({
         <p className="help">Chargement…</p>
       ) : members.length === 0 ? (
         <p className="help" style={{ fontStyle: "italic" }}>
-          Aucun membre explicite. Les OrgADMIN+ ont accès OWNER implicite.
+          Aucun membre explicite. OrgADMIN+ ont accès OWNER implicite, OrgDEV a accès EDITOR implicite.
         </p>
       ) : (
         <div className="row-list">
@@ -716,11 +804,17 @@ function AddMemberForm({
 function EntryDialog({
   entryBase,
   initial,
+  currentCollectionId,
+  movableCollections,
   onClose,
   onSaved,
 }: {
   entryBase: string;
   initial: Entry | null;
+  currentCollectionId: string;
+  /** Collections du meme scope ou le user a EDITOR+, hors la courante.
+   *  Si vide, le selecteur "deplacer" n'est pas affiche. */
+  movableCollections: Collection[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -736,6 +830,10 @@ function EntryDialog({
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [tagInput, setTagInput] = useState("");
   const [favorite, setFavorite] = useState(initial?.favorite ?? false);
+  // Selection de collection (move). Default = courante. Visible uniquement
+  // en mode edit + si au moins une autre collection est disponible.
+  const [selectedCollectionId, setSelectedCollectionId] =
+    useState(currentCollectionId);
   const [pwdLoaded, setPwdLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -777,6 +875,10 @@ function EntryDialog({
       };
       if (!isEdit || pwdLoaded) body.password = password;
       if (!isEdit || totpLoaded) body.totpSecret = totpSecret.trim() || null;
+      // Move : seulement en edit, et seulement si la collection a change.
+      if (isEdit && selectedCollectionId !== currentCollectionId) {
+        body.targetCollectionId = selectedCollectionId;
+      }
 
       const url2 = isEdit ? `${entryBase}/${initial!.id}` : entryBase;
       const method = isEdit ? "PATCH" : "POST";
@@ -992,6 +1094,32 @@ function EntryDialog({
               />
               <span>⭐ Favori</span>
             </label>
+            {isEdit && movableCollections.length > 0 && (
+              <div className="field">
+                <label htmlFor="entryCollection">Collection</label>
+                <select
+                  id="entryCollection"
+                  value={selectedCollectionId}
+                  onChange={(e) => setSelectedCollectionId(e.target.value)}
+                  className="select"
+                >
+                  <option value={currentCollectionId}>
+                    {/* La collection courante n'est pas dans movableCollections,
+                        on l'affiche separement comme defaut. */}
+                    (rester dans cette collection)
+                  </option>
+                  {movableCollections.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="help">
+                  Pour déplacer cette entrée vers une autre collection du
+                  même {/* org/projet selon le scope */} scope.
+                </div>
+              </div>
+            )}
             {error && <p className="error-text">{error}</p>}
           </div>
           <div className="dialog-footer">
