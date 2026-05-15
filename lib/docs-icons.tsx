@@ -10,6 +10,7 @@
 // puis référencer le nom dans le frontmatter d'une page.
 
 import {
+  RiAppsLine,
   RiBookOpenLine,
   RiCloudLine,
   RiFlowChart,
@@ -17,6 +18,7 @@ import {
   RiKey2Line,
   RiPuzzle2Line,
   RiQuestionLine,
+  RiRefreshLine,
   RiRocketLine,
   RiSafe2Line,
   RiShareForward2Line,
@@ -25,12 +27,14 @@ import {
 } from "@remixicon/react";
 
 const ICONS: Record<string, RemixiconComponentType> = {
+  RiAppsLine,
   RiBookOpenLine,
   RiCloudLine,
   RiFlowChart,
   RiFolderOpenLine,
   RiKey2Line,
   RiPuzzle2Line,
+  RiRefreshLine,
   RiRocketLine,
   RiSafe2Line,
   RiShareForward2Line,

@@ -64,6 +64,35 @@ la nouvelle valeur.
 > requis. C'est la stratégie recommandée pour les `JWT_SECRET`,
 > `NEXTAUTH_SECRET` et secrets similaires.
 
+### `API_KEY` — rotation de clé API Gateway
+
+Physalis génère automatiquement une nouvelle clé dans l'**API Gateway** du
+projet, met à jour la valeur du secret, révoque l'ancienne clé
+**immédiatement**, puis déclenche un redéploiement GitHub Actions pour que
+l'application recharge la nouvelle valeur depuis le vault.
+
+Prérequis :
+
+- Le projet doit avoir au moins une **API** configurée dans l'onglet
+  **API Gateway**.
+- Le secret doit être **lié à une clé API** existante — sélectionnez l'API
+  puis la clé lors de la configuration de la rotation.
+
+> ⚠️ **Cette stratégie ne convient qu'aux applications qui lisent leur `.env`
+> depuis le vault au démarrage** (via un redéploiement GitHub Actions). Si la
+> clé est copiée directement dans n8n, Make ou un autre outil externe, vous
+> devrez la mettre à jour manuellement après chaque rotation.
+
+Après chaque rotation :
+
+- La nouvelle clé brute est stockée chiffrée dans le secret (l'ancienne
+  valeur est archivée dans le versioning).
+- L'ancienne clé est révoquée côté Gateway : tout appel à
+  `/api/gateway/verify` avec l'ancienne clé retourne `{ valid: false,
+  reason: "revoked" }` **immédiatement** (mode REMOTE).
+- Si le projet est lié à un dépôt GitHub et que `GITHUB_DISPATCH_TOKEN` est
+  configuré, un redéploiement est déclenché automatiquement.
+
 ### `REMINDER` — rappel de rotation manuelle
 
 Physalis **n'effectue pas** la rotation lui-même. Il envoie un e-mail à
