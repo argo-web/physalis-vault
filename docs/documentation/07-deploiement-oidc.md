@@ -124,7 +124,7 @@ du body de la requête correspond.
 
 ## 4. Le workflow modèle
 
-Copiez [docs/deploy.modele.yml](https://github.com/argoweb/physalis/blob/main/docs/deploy.modele.yml)
+Copiez [docs/deploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/deploy.modele.yml)
 dans `.github/workflows/deploy.yml` de votre repo. Adaptez les variables
 en haut :
 
@@ -228,8 +228,21 @@ push, configurez l'OrgSecret `GITHUB_DISPATCH_TOKEN` (un PAT avec scope
 apparaîtra sur chaque environnement.
 
 Au clic, Physalis appelle `POST /repos/{owner}/{repo}/actions/workflows/{wf}/dispatches`
-qui déclenche votre workflow `deploy.yml` sur la branche configurée
-dans la Policy.
+qui déclenche le workflow `redeploy.yml` sur la branche de l'environnement.
+Ce workflow **ne rebuilde pas les images** — il re-fetch le bundle `.env`,
+l'écrit sur le VPS et redémarre les containers via `docker compose up -d`.
+C'est suffisant pour les secrets chargés au runtime (variables d'environnement,
+clés passées via `.env`).
+
+Copiez [docs/redeploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/redeploy.modele.yml)
+dans `.github/workflows/redeploy.yml` de votre repo et adaptez les variables
+en haut du fichier.
+
+> **Secrets injectés au build** (ex. `VITE_*`) — Si votre secret est passé
+> comme `--build-arg` Docker lors du build de l'image, un simple redeploy ne
+> suffit pas. Il faut déclencher le workflow de build complet (`deploy.yml`).
+> Physalis le gère automatiquement via l'option **« Build complet requis »**
+> dans la configuration de rotation du secret (voir [Rotation des secrets](rotations)).
 
 ## Aller plus loin
 

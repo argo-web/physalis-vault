@@ -202,11 +202,15 @@ Pour configurer la rotation :
 2. Ouvrez la rotation du secret → stratégie **Clé API Gateway**.
 3. Sélectionnez l'API et la clé correspondante.
 4. Définissez l'intervalle en jours.
+5. Si la clé est injectée au **build** (ex. `VITE_*` passé comme `--build-arg`
+   Docker), cochez **« Build complet requis »** — Physalis déclenchera alors
+   le workflow `deploy.yml` du projet au lieu du simple `redeploy.yml`, afin
+   de rebuilder l'image avec la nouvelle valeur.
 
 > ⚠️ La rotation automatique n'est adaptée que si la clé est chargée depuis
-> le vault au démarrage de l'application (via `.env`). Si vous l'avez copiée
-> directement dans n8n ou un autre outil externe, vous devrez la mettre à
-> jour manuellement après chaque rotation.
+> le vault, soit au runtime via `.env`, soit au build via `--build-arg`.
+> Si vous l'avez copiée directement dans n8n, Make ou un autre outil externe,
+> vous devrez la mettre à jour manuellement après chaque rotation.
 
 Voir [Rotation des secrets](rotations) pour la configuration complète.
 

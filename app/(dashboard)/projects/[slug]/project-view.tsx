@@ -260,6 +260,7 @@ function RedeployButton({
   githubRepo: string | null;
 }) {
   const [pending, startTransition] = useTransition();
+  const [confirm, setConfirm] = useState(false);
   const [feedback, setFeedback] = useState<
     | { kind: "success"; message: string }
     | { kind: "error"; message: string }
@@ -267,14 +268,9 @@ function RedeployButton({
   >(null);
   const disabled = !githubRepo;
 
-  function trigger() {
+  function handleConfirm() {
+    setConfirm(false);
     setFeedback(null);
-    if (
-      !confirm(
-        `Déclencher un redeploy GitHub Actions pour l'environnement "${envName}" ?`,
-      )
-    )
-      return;
     startTransition(async () => {
       const res = await fetch(`/api/projects/${slug}/redeploy`, {
         method: "POST",
@@ -298,30 +294,71 @@ function RedeployButton({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      {feedback && (
-        <span
-          className={
-            feedback.kind === "success" ? "success-text" : "error-text"
-          }
-        >
-          {feedback.message}
-        </span>
+    <>
+      {confirm && (
+        <div className="dialog-overlay">
+          <div className="dialog">
+            <div className="dialog-header">
+              <h2 className="dialog-title">Confirmer le redeploy</h2>
+              <button
+                type="button"
+                onClick={() => setConfirm(false)}
+                className="dialog-close"
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="dialog-body">
+              <p className="text-sm">
+                Déclencher un redeploy GitHub Actions pour l&apos;environnement{" "}
+                <strong>{envName}</strong> ?
+              </p>
+            </div>
+            <div className="dialog-footer">
+              <button
+                type="button"
+                onClick={() => setConfirm(false)}
+                className="btn btn-ghost btn-sm"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                className="btn btn-accent btn-sm"
+              >
+                Déclencher
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-      <button
-        type="button"
-        onClick={trigger}
-        disabled={disabled || pending}
-        title={
-          disabled
-            ? "Configurer githubRepo dans les paramètres du projet"
-            : `Déclencher workflow_dispatch sur ${envName}`
-        }
-        className="btn btn-accent btn-sm"
-      >
-        {pending ? "Déclenchement..." : "↻ Redeploy"}
-      </button>
-    </div>
+      <div className="flex items-center gap-2">
+        {feedback && (
+          <span
+            className={
+              feedback.kind === "success" ? "success-text" : "error-text"
+            }
+          >
+            {feedback.message}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => { setFeedback(null); setConfirm(true); }}
+          disabled={disabled || pending}
+          title={
+            disabled
+              ? "Configurer githubRepo dans les paramètres du projet"
+              : `Déclencher workflow_dispatch sur ${envName}`
+          }
+          className="btn btn-accent btn-sm"
+        >
+          {pending ? "Déclenchement..." : "↻ Redeploy"}
+        </button>
+      </div>
+    </>
   );
 }
 

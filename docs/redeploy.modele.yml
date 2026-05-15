@@ -4,7 +4,7 @@
 #
 # Differences avec deploy.yml :
 #   - Pas de job `build-push` (on ne reconstruit pas l'image)
-#   - Declenchement manuel uniquement (workflow_dispatch + input env)
+#   - Declenchement manuel (workflow_dispatch + input env) ou automatique par Physalis (rotation)
 #   - Pull du `dockerCompose` depuis le bundle /api/deploy
 #   - `docker compose up -d --no-build` (respecte le tag d'image courant)
 #
@@ -45,6 +45,17 @@ jobs:
       contents: read
 
     steps:
+      - name: Set VAULT_ENV
+        # Manuel (UI Physalis) → input utilisateur, ref = envName.
+        # Déclenché par Physalis rotation → pas d'inputs, ref = envName aussi.
+        # Convention : nom de branche = nom d'environnement (production, staging, …).
+        run: |
+          if [ -n "${{ inputs.environment }}" ]; then
+            echo "VAULT_ENV=${{ inputs.environment }}" >> $GITHUB_ENV
+          else
+            echo "VAULT_ENV=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
       - name: Get OIDC token
         id: oidc
         uses: actions/github-script@v7
@@ -57,7 +68,6 @@ jobs:
       - name: Fetch deploy bundle
         env:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-          VAULT_ENV: ${{ inputs.environment }}
         run: |
           set -euo pipefail
           umask 077
@@ -85,7 +95,7 @@ jobs:
           printf '%s' "$response" > "$RUNNER_TEMP/bundle.json"
           jq -r '.sshKey' "$RUNNER_TEMP/bundle.json" > "$RUNNER_TEMP/id_deploy"
           chmod 600 "$RUNNER_TEMP/id_deploy"
-          jq -r '.secrets | to_entries[] | "\(.key)=\(.value)"' \
+          jq -r '.secrets | to_entries[] | "\(.key)=\(.value | gsub("\n"; "\\n"))"' \
             "$RUNNER_TEMP/bundle.json" > "$RUNNER_TEMP/.env"
 
           # Extraction du docker-compose si fourni par le vault.
@@ -99,8 +109,6 @@ jobs:
           fi
 
       - name: Redeploy via SSH
-        env:
-          VAULT_ENV: ${{ inputs.environment }}
         run: |
           set -euo pipefail
           IP=$(jq -r '.serverIp'    "$RUNNER_TEMP/bundle.json")
