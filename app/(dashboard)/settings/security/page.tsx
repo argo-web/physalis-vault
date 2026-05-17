@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import SecurityPanel from "./security-panel";
 import PluginSessionsPanel from "./plugin-sessions-panel";
 import UserTokensPanel from "./user-tokens-panel";
+import pkg from "@/package.json";
 
 export default async function SecurityPage() {
   const session = await auth();
@@ -39,6 +40,9 @@ export default async function SecurityPage() {
           />
           <UserTokensPanel />
           <PluginSessionsPanel />
+          <div className="settings-section" style={{ padding: "12px 16px" }}>
+            <span className="row-meta code-mono">Physalis v{pkg.version}</span>
+          </div>
         </div>
       </div>
     </div>

@@ -78,40 +78,48 @@ Un VPS secondaire reçoit chaque nuit une copie chiffrée de la base de données
 
 ---
 
-## Quickstart
+## Installation
 
-### 1. Local — stack complète (Docker)
+### 1. Pull & run (recommandé)
+
+Aucun clone, aucun build — deux fichiers suffisent :
 
 ```bash
+curl -O https://raw.githubusercontent.com/argo-web/physalis-vault/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/argo-web/physalis-vault/main/.env.example
 cp .env.example .env
-# Renseigner ENCRYPTION_KEY, AUTH_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
-docker compose up -d --build
 ```
 
-→ http://localhost:3001 (3000 réservé sur certains hôtes ; ajustable dans
-[docker-compose.yml](docker-compose.yml)).
-
-Le premier démarrage applique les migrations Prisma et crée l'admin défini par
-`ADMIN_EMAIL` / `ADMIN_PASSWORD` ([scripts/bootstrap-admin.mjs](scripts/bootstrap-admin.mjs)).
-
-### 2. Local — dev natif (hot-reload)
+Éditer `.env` : renseigner au minimum `DB_PASSWORD`, `ENCRYPTION_KEY`, `AUTH_SECRET`, `NEXTAUTH_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `NEXTAUTH_URL`.
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # Postgres seul (port 5434)
-npm install
-npx prisma migrate dev
-npm run bootstrap-admin
-npm run dev                                       # http://localhost:3000
+docker compose up -d
 ```
 
-### 3. Production (VPS derrière Nginx Proxy Manager)
+→ http://localhost:3000 (configurable via `PORT` dans `.env`).
 
-Déploiement automatique sur push `main` via [.github/workflows/deploy.yml](.github/workflows/deploy.yml) :
-test → build/push GHCR → SSH deploy + health check.
+Le premier démarrage applique les migrations Prisma et crée le compte admin défini par `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Les démarrages suivants sont idempotents.
 
-Voir [docs/physalis.md §10.3](docs/physalis.md) pour le setup VPS initial
-(création du dossier, génération de la clé SSH dédiée au workflow, contenu de
-`.env`, secrets GitHub à créer).
+### 2. Build depuis les sources (dev / contribution)
+
+```bash
+git clone https://github.com/argo-web/physalis-vault.git
+cd physalis-vault
+cp .env.example .env   # Renseigner les variables
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+La DB est exposée sur le port `5432` de l'hôte pour permettre d'utiliser `prisma studio` ou les outils locaux.
+
+Pour le dev natif (hot-reload) :
+
+```bash
+docker compose -f docker-compose.dev.yml up -d db   # DB seule
+npm install
+npx prisma migrate dev --schema=prisma/schema.prisma
+npm run bootstrap-admin
+npm run dev                                          # http://localhost:3000
+```
 
 ---
 

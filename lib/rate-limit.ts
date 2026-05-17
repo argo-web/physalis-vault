@@ -42,6 +42,15 @@ export function getClientIp(req: Request): string {
  * Returns a 429 NextResponse if the bucket is over the limit, or null to let
  * the caller proceed. Sets standard rate-limit headers on the 429 response.
  */
+export function resetRateLimit(
+  req: Request,
+  scope: string,
+  identifier?: string,
+): void {
+  const id = identifier ?? getClientIp(req);
+  buckets.delete(`${scope}:${id}`);
+}
+
 export function rateLimit(
   req: Request,
   scope: string,

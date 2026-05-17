@@ -21,19 +21,25 @@ const POLL_MAX_ATTEMPTS = 6; // ~3s
 
 export default function ExtensionInstallPrompt() {
   const [status, setStatus] = useState<Status>("checking");
+  const [version, setVersion] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    function detected(): boolean {
-      return Boolean(document.documentElement.dataset.secretvaultExt);
+    function getVersion(): string | null {
+      return document.documentElement.dataset.secretvaultExt ?? null;
     }
 
-    if (detected()) {
+    const v = getVersion();
+    if (v) {
+      setVersion(v);
       setStatus("installed");
       return;
     }
 
-    const onReady = () => setStatus("installed");
+    const onReady = () => {
+      setVersion(getVersion());
+      setStatus("installed");
+    };
     document.addEventListener(
       "secretvault-extension-ready",
       onReady as EventListener,
@@ -42,7 +48,9 @@ export default function ExtensionInstallPrompt() {
     let attempts = 0;
     const timer = setInterval(() => {
       attempts++;
-      if (detected()) {
+      const v2 = getVersion();
+      if (v2) {
+        setVersion(v2);
         setStatus("installed");
         clearInterval(timer);
       } else if (attempts >= POLL_MAX_ATTEMPTS) {
@@ -59,6 +67,36 @@ export default function ExtensionInstallPrompt() {
       );
     };
   }, []);
+
+  if (status === "installed") {
+    const hasUpdate = version != null && isVersionLower(version, EXTENSION_VERSION);
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <RiPuzzle2Line size={13} aria-hidden />
+          Extension{version ? ` v${version}` : ""} installée
+        </span>
+        {hasUpdate && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--accent)",
+              background: "var(--accent-bg)",
+              border: "1px solid var(--accent-soft)",
+              borderRadius: 99,
+              padding: "2px 8px",
+              cursor: "pointer",
+            }}
+          >
+            v{EXTENSION_VERSION} disponible
+          </button>
+        )}
+      </span>
+    );
+  }
 
   if (status !== "not_installed") return null;
 
@@ -80,7 +118,16 @@ type Browser = "chrome" | "firefox" | "other";
 
 // Version courante de l'extension. A bumper en meme temps que les zips dans
 // public/ : `physalis-extension-<version>-chrome.zip` et `-firefox.zip`.
-const EXTENSION_VERSION = "0.4.0";
+const EXTENSION_VERSION = "0.5.0";
+
+function isVersionLower(a: string, b: string): boolean {
+  const parse = (v: string) => v.split(".").map(Number);
+  const [aMaj = 0, aMin = 0, aPatch = 0] = parse(a);
+  const [bMaj = 0, bMin = 0, bPatch = 0] = parse(b);
+  if (aMaj !== bMaj) return aMaj < bMaj;
+  if (aMin !== bMin) return aMin < bMin;
+  return aPatch < bPatch;
+}
 
 function downloadUrl(browser: Browser): string | null {
   if (browser === "chrome")

@@ -108,6 +108,12 @@ export default function OrgSwitcher({
       </button>
 
       {open && (
+        <>
+        <div
+          className="fixed inset-0 z-10"
+          onClick={() => setOpen(false)}
+          aria-hidden
+        />
         <div className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-border bg-surface shadow-lg z-20 overflow-hidden">
           <ul className="max-h-72 overflow-auto">
             {organizations.map((org) => (
@@ -186,6 +192,7 @@ export default function OrgSwitcher({
             )}
           </div>
         </div>
+        </>
       )}
     </div>
   );

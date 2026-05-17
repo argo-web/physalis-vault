@@ -13,38 +13,45 @@ type Params = { params: Promise<{ slug: string; env: string; key: string }> };
 
 // Reveal a single secret value (web UI - one key at a time, never bulk).
 export async function GET(req: Request, { params }: Params) {
-  const { slug, env, key } = await params;
-  const access = await requireEnvironment(slug, env);
-  if ("error" in access) return access.error;
+  try {
+    const { slug, env, key } = await params;
+    const access = await requireEnvironment(slug, env);
+    if ("error" in access) return access.error;
 
-  const secret = await prisma.secret.findUnique({
-    where: {
-      environmentId_key: { environmentId: access.environment.id, key },
-    },
-  });
-  if (!secret) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const secret = await prisma.secret.findUnique({
+      where: {
+        environmentId_key: { environmentId: access.environment.id, key },
+      },
+      select: { id: true, key: true, encryptedValue: true, iv: true, tag: true },
+    });
+    if (!secret) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const value = decrypt({
+      encryptedValue: secret.encryptedValue,
+      iv: secret.iv,
+      tag: secret.tag,
+    });
+
+    logAction({
+      action: "SECRET_REVEAL",
+      actor: { kind: "user", userId: access.user.id, email: access.user.email },
+      organizationId: access.project.organizationId,
+      projectId: access.project.id,
+      environmentId: access.environment.id,
+      targetType: "Secret",
+      targetId: secret.id,
+      secretKey: secret.key,
+      req,
+    });
+
+    return NextResponse.json({ key: secret.key, value });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[reveal] unexpected error:", err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  const value = decrypt({
-    encryptedValue: secret.encryptedValue,
-    iv: secret.iv,
-    tag: secret.tag,
-  });
-
-  logAction({
-    action: "SECRET_REVEAL",
-    actor: { kind: "user", userId: access.user.id, email: access.user.email },
-    organizationId: access.project.organizationId,
-    projectId: access.project.id,
-    environmentId: access.environment.id,
-    targetType: "Secret",
-    targetId: secret.id,
-    secretKey: secret.key,
-    req,
-  });
-
-  return NextResponse.json({ key: secret.key, value });
 }
 
 /**
@@ -239,33 +246,40 @@ export async function PATCH(req: Request, { params }: Params) {
 }
 
 export async function DELETE(req: Request, { params }: Params) {
-  const { slug, env, key } = await params;
-  const access = await requireEnvironment(slug, env, "EDITOR");
-  if ("error" in access) return access.error;
+  try {
+    const { slug, env, key } = await params;
+    const access = await requireEnvironment(slug, env, "EDITOR");
+    if ("error" in access) return access.error;
 
-  const existing = await prisma.secret.findUnique({
-    where: {
-      environmentId_key: { environmentId: access.environment.id, key },
-    },
-    select: { id: true, key: true },
-  });
-  if (!existing) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const existing = await prisma.secret.findUnique({
+      where: {
+        environmentId_key: { environmentId: access.environment.id, key },
+      },
+      select: { id: true, key: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    await prisma.secretVersion.deleteMany({ where: { secretId: existing.id } });
+    await prisma.secret.delete({ where: { id: existing.id }, select: { id: true } });
+
+    logAction({
+      action: "SECRET_DELETE",
+      actor: { kind: "user", userId: access.user.id, email: access.user.email },
+      organizationId: access.project.organizationId,
+      projectId: access.project.id,
+      environmentId: access.environment.id,
+      targetType: "Secret",
+      targetId: existing.id,
+      secretKey: existing.key,
+      req,
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[delete] unexpected error:", err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  await prisma.secret.delete({ where: { id: existing.id } });
-
-  logAction({
-    action: "SECRET_DELETE",
-    actor: { kind: "user", userId: access.user.id, email: access.user.email },
-    organizationId: access.project.organizationId,
-    projectId: access.project.id,
-    environmentId: access.environment.id,
-    targetType: "Secret",
-    targetId: existing.id,
-    secretKey: existing.key,
-    req,
-  });
-
-  return NextResponse.json({ ok: true });
 }

@@ -12,10 +12,28 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=()",
   },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self'",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join("; "),
+  },
 ];
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  poweredByHeader: false,
   // Force Next à embarquer les markdown utilisateur dans la sortie standalone.
   // La layout `/docs` lit `docs/documentation/*.md` via fs.readdir à chaque
   // requête (sidebar) — sans cette directive, Next ne trace pas ces fichiers

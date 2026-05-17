@@ -1,7 +1,7 @@
 services:
   app:
-    image: ghcr.io/argo-web/physalis-vault:latest
-    container_name: physalis
+    build: .
+    container_name: physalis-dev
     restart: unless-stopped
     env_file: .env
     environment:
@@ -18,14 +18,16 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: physalis-db
+    container_name: physalis-db-dev
     restart: always
     environment:
       POSTGRES_USER: physalis
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: physalis
+    ports:
+      - "5432:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data_dev:/var/lib/postgresql/data
     networks:
       - internal
     healthcheck:
@@ -34,7 +36,7 @@ services:
       retries: 10
 
 volumes:
-  pg_data:
+  pg_data_dev:
 
 networks:
   internal:
