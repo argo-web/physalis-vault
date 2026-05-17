@@ -6,6 +6,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://physalis:${DB_PASSWORD}@db:5432/physalis
+      PORT: "3000"
     ports:
       - "${PORT:-3000}:3000"
     tmpfs:
