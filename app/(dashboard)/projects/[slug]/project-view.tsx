@@ -26,7 +26,7 @@ const ROLE_RANK: Record<ProjectRole, number> = {
   OWNER: 3,
 };
 
-const ENV_ORDER = ["production", "staging", "development"];
+const ENV_ORDER = ["test", "development", "staging", "production", "main"];
 const ENV_DISPLAY_NAMES: Record<string, string> = {
   development: "développement",
 };
@@ -38,7 +38,7 @@ function envDisplay(name: string): string {
 function sortEnvs(a: EnvSummary, b: EnvSummary): number {
   const ai = ENV_ORDER.indexOf(a.name);
   const bi = ENV_ORDER.indexOf(b.name);
-  if (ai === -1 && bi === -1) return a.name.localeCompare(b.name);
+  if (ai === -1 && bi === -1) return 0; // preserve creation order
   if (ai === -1) return 1;
   if (bi === -1) return -1;
   return ai - bi;
@@ -95,11 +95,9 @@ export default function ProjectView({
   return (
     <div>
       {/* Tab bar */}
-      <div
-        className="tab-bar"
-        style={{ display: "flex", justifyContent: "space-between" }}
-      >
-        <div style={{ display: "flex" }}>
+      <div className="tab-bar" style={{ display: "flex", alignItems: "stretch" }}>
+        {/* Left group */}
+        <div style={{ flex: 1, display: "flex" }}>
           <button
             type="button"
             className={`tab ${tab.kind === "access" ? "active" : ""}`}
@@ -114,6 +112,10 @@ export default function ProjectView({
           >
             🔒 Coffre
           </button>
+        </div>
+
+        {/* Center group — env tabs */}
+        <div style={{ display: "flex" }}>
           {sortedEnvs.map((env) => (
             <button
               key={env.id}
@@ -131,7 +133,8 @@ export default function ProjectView({
           ))}
         </div>
 
-        <div style={{ display: "flex" }}>
+        {/* Right group */}
+        <div style={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>
           {canManageMembers && (
             <button
               type="button"
