@@ -14,7 +14,6 @@ import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
 import { readJson, requireUser } from "@/lib/api";
 import { isValidSecretKey } from "@/lib/validation";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { logAction } from "@/lib/audit";
 import { deleteTokenIndex } from "@/lib/token-index";
 
@@ -23,7 +22,6 @@ type Params = { params: Promise<{ id: string }> };
 export async function POST(req: Request, { params }: Params) {
   const userRes = await requireUser();
   if ("error" in userRes) return userRes.error;
-  const tenantSlug = await getCurrentTenantSlug();
   const { id } = await params;
 
   const body = (await readJson(req)) as { value?: string } | null;
@@ -144,7 +142,6 @@ export async function POST(req: Request, { params }: Params) {
       secretRequestId: sr.id,
     },
     req,
-    tenantSlug,
   });
 
   return NextResponse.json({ ok: true });

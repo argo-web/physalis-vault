@@ -9,7 +9,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/api";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { logAction } from "@/lib/audit";
 
 type Params = { params: Promise<{ id: string }> };
@@ -17,7 +16,6 @@ type Params = { params: Promise<{ id: string }> };
 export async function POST(req: Request, { params }: Params) {
   const userRes = await requireUser();
   if ("error" in userRes) return userRes.error;
-  const tenantSlug = await getCurrentTenantSlug();
   const { id } = await params;
 
   const sr = await prisma.secretRequest.findUnique({
@@ -85,7 +83,6 @@ export async function POST(req: Request, { params }: Params) {
     targetId: sr.id,
     metadata: { label: sr.label, firstReveal: !sr.viewedAt },
     req,
-    tenantSlug,
   });
 
   return NextResponse.json({

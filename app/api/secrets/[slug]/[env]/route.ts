@@ -91,7 +91,6 @@ export async function GET(req: NextRequest, { params }: Params) {
     targetId: machineToken.environmentId,
     metadata: { keys_count: records.length },
     req,
-    tenantSlug: machineToken.tenantSlug,
   });
 
   return NextResponse.json({ secrets });

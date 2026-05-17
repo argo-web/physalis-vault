@@ -6,10 +6,8 @@
 //   1. Resolve token via admin.password_reset_tokens (must exist, not expired,
 //      not used).
 //   2. Validate new password (≥12 chars).
-//   3. Update user.password dans le bon schéma client_<slug>.
+//   3. Update user.password directement dans prisma.user.
 //   4. Mark token as used.
-//   5. Audit `LOGIN_FAILURE` n'a pas de sens ici. On log un événement
-//      générique côté audit serveur (console).
 //
 // Rate-limit : 5/h/IP (anti-brute si un attaquant tentait des tokens random).
 
@@ -21,7 +19,7 @@ import {
   markResetTokenUsed,
   resolveResetToken,
 } from "@/lib/password-reset";
-import { withTenantSchema } from "@/lib/tenant";
+import { prisma } from "@/lib/prisma";
 
 export type ResetResult = { ok: true } | { ok: false; error: string };
 
@@ -63,27 +61,21 @@ export async function resetPassword(
       error: "Lien invalide ou expiré. Demandez un nouveau lien.",
     };
   }
-  if (!record.tenantSlug) {
-    // Reset SUPERADMIN platform-level non implémenté pour l'instant.
-    return { ok: false, error: "Reset non disponible pour ce compte." };
-  }
 
   const hash = await bcrypt.hash(password, 12);
   try {
-    await withTenantSchema(record.tenantSlug, async (tx) => {
-      // Double-check l'email pour éviter un edge case où l'user aurait été
-      // recréé avec un id différent (improbable mais paranoia OK).
-      const user = await tx.user.findUnique({
-        where: { id: record.userId },
-        select: { id: true, email: true },
-      });
-      if (!user || user.email.toLowerCase() !== record.email.toLowerCase()) {
-        throw new Error("user_changed");
-      }
-      await tx.user.update({
-        where: { id: user.id },
-        data: { password: hash },
-      });
+    // Double-check l'email pour éviter un edge case où l'user aurait été
+    // recréé avec un id différent (improbable mais paranoia OK).
+    const user = await prisma.user.findUnique({
+      where: { id: record.userId },
+      select: { id: true, email: true },
+    });
+    if (!user || user.email.toLowerCase() !== record.email.toLowerCase()) {
+      throw new Error("user_changed");
+    }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hash },
     });
   } catch (err) {
     console.error("[reset-password] update failed:", err);

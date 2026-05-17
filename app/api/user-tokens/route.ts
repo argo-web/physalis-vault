@@ -12,12 +12,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { readJson, requireUser } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { createTokenIndex } from "@/lib/token-index";
 import {
   generateUserToken,
   tokenPrefixForUi,
 } from "@/lib/integration-token";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { createHash } from "crypto";
 
 const NAME_MAX = 100;
@@ -111,15 +109,6 @@ export async function POST(req: Request) {
       createdAt: true,
     },
   });
-
-  // Phase 6 — entrée admin.token_index pour la résolution multi-tenant
-  // au moment de la validation Bearer.
-  const tenantSlug = await getCurrentTenantSlug();
-  if (tenantSlug) {
-    await createTokenIndex(tokenHash, tenantSlug, "USER").catch((err) => {
-      console.error("[user-tokens] failed to create token_index entry:", err);
-    });
-  }
 
   logAction({
     action: "USER_TOKEN_CREATE",

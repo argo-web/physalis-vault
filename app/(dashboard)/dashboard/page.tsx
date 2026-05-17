@@ -19,7 +19,7 @@ import {
   type RemixiconComponentType,
 } from "@remixicon/react";
 import { auth } from "@/lib/auth";
-import { adminPrisma, prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { getCurrentOrgSlug } from "@/lib/api";
 import { isPlatformAdmin } from "@/lib/roles";
 import type { AccessAction } from "@prisma/client";
@@ -124,7 +124,6 @@ export default async function DashboardPage({
     lastDeploysByProject,
     activityTotal,
     activityRows,
-    tenantClient,
   ] = await Promise.all([
     prisma.orgMember.count({ where: { userId: session.user.id } }),
     // Total orgs et users distincts dans le tenant — pour la card "Plan".
@@ -188,33 +187,7 @@ export default async function DashboardPage({
           },
         })
       : Promise.resolve([] as RecentActivityRow[]),
-    // Métadonnées plan + quotas + état billing (admin schema, hors tenant).
-    session.user.tenantSlug
-      ? adminPrisma.client.findUnique({
-          where: { slug: session.user.tenantSlug },
-          select: {
-            id: true,
-            plan: true,
-            maxOrgs: true,
-            maxUsers: true,
-            // extraOrgs/extraUsers : champs SaaS de billing add-ons,
-            // absents du schema self-host.
-            comped: true,
-            status: true,
-            trialEndsAt: true,
-          },
-        })
-      : Promise.resolve(null),
   ]);
-
-  // L'user est OWNER s'il a au moins une OrgMember role=OWNER dans le
-  // tenant. Utilisé pour conditionner l'affichage des actions billing.
-  const isTenantOwner = await prisma.orgMember
-    .findFirst({
-      where: { userId: session.user.id, role: "OWNER" },
-      select: { id: true },
-    })
-    .then((m) => Boolean(m));
 
   const activeProjectCount = recentDeploys.length;
   const activityTotalPages = Math.max(

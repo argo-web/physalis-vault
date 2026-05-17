@@ -32,50 +32,7 @@ if (process.env.NODE_ENV !== "production") {
 // Re-export du namespace Prisma (types runtime — TransactionClient, etc.)
 export { PrismaTypes as Prisma };
 
-// ─── Stubs des types admin (self-host n'a pas le schema admin) ───────
-// Ces types existaient dans le SaaS via le client `admin-client` Prisma.
-// En self-host on les déclare comme types vides/literal pour que les
-// imports `import type { Plan } from "@/lib/prisma"` continuent à
-// compiler. Les valeurs runtime ne sont jamais utilisées.
-
-export type Plan = "FREE" | "SHARED" | "DEDICATED";
-export type ClientStatus = "TRIAL" | "ACTIVE" | "SUSPENDED" | "CANCELLED";
-export type SubscriptionStatus =
-  | "TRIALING"
-  | "ACTIVE"
-  | "PAST_DUE"
-  | "CANCELLED";
 export type TokenKind = "MACHINE" | "PLUGIN" | "SHARE";
-
-export type Client = {
-  id: string;
-  slug: string;
-  name: string;
-  plan: Plan;
-  status: ClientStatus;
-  maxOrgs: number;
-  maxUsers: number;
-  comped: boolean;
-  trialEndsAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export type Subscription = {
-  id: string;
-  clientId: string;
-  status: SubscriptionStatus;
-  currentPeriodEnd: Date | null;
-  createdAt: Date;
-};
-
-export type AuditLog = {
-  id: string;
-  action: string;
-  actorId: string | null;
-  metadata: unknown;
-  createdAt: Date;
-};
 
 export type TokenIndex = {
   tokenHash: string;
@@ -83,18 +40,3 @@ export type TokenIndex = {
   kind: TokenKind;
   createdAt: Date;
 };
-
-export type OidcPolicy = {
-  id: string;
-  tenantSlug: string;
-  repo: string;
-  workflow: string;
-  branch: string;
-  projectId: string;
-  environmentId: string;
-  createdAt: Date;
-};
-
-// Namespace AdminPrisma — utilisé pour les types `WhereInput` etc.
-// dans le code SaaS. En self-host, on aliase sur le namespace tenant.
-export type AdminPrisma = typeof PrismaTypes;

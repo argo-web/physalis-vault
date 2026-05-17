@@ -1,10 +1,5 @@
 "use client";
 
-// Formulaire de signup public — Phase 4.1.
-//
-// Auto-derive du slug depuis le nom de l'organisation, avec vérification
-// de disponibilité en temps réel via /api/signup/check-slug (debounced 350ms).
-
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
 import { signupTenant, type SignupResult } from "./actions";
@@ -25,36 +20,21 @@ type SlugCheck =
   | { kind: "available" }
   | { kind: "unavailable"; reason: string };
 
-export default function SignupForm({
-  tenantDomain,
-  sharedPortal,
-}: {
-  tenantDomain: string;
-  sharedPortal: string;
-}) {
-  const [state, action, pending] = useActionState<
-    SignupResult | null,
-    FormData
-  >(signupTenant, null);
+export default function SignupForm() {
+  const [state, action, pending] = useActionState<SignupResult | null, FormData>(
+    signupTenant,
+    null,
+  );
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
   const [slugCheck, setSlugCheck] = useState<SlugCheck>({ kind: "idle" });
-  const [plan, setPlan] = useState<"FREE" | "SHARED" | "DEDICATED">("FREE");
 
-  const slugSample = slug || "<slug>";
-  const accessUrl =
-    plan === "FREE"
-      ? `${sharedPortal}/login?tenant=${slugSample}`
-      : `${slugSample}.${tenantDomain}`;
-
-  // Auto-derive slug.
   useEffect(() => {
     if (!slugTouched) setSlug(deriveSlug(name));
   }, [name, slugTouched]);
 
-  // Debounced slug availability check.
   useEffect(() => {
     if (!slug) {
       setSlugCheck({ kind: "idle" });
@@ -63,21 +43,10 @@ export default function SignupForm({
     setSlugCheck({ kind: "checking" });
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/signup/check-slug?slug=${encodeURIComponent(slug)}`,
-        );
-        if (!res.ok) {
-          setSlugCheck({ kind: "idle" });
-          return;
-        }
-        const data = (await res.json()) as
-          | { available: true }
-          | { available: false; reason: string };
-        if (data.available) {
-          setSlugCheck({ kind: "available" });
-        } else {
-          setSlugCheck({ kind: "unavailable", reason: data.reason });
-        }
+        const res = await fetch(`/api/signup/check-slug?slug=${encodeURIComponent(slug)}`);
+        if (!res.ok) { setSlugCheck({ kind: "idle" }); return; }
+        const data = (await res.json()) as { available: true } | { available: false; reason: string };
+        setSlugCheck(data.available ? { kind: "available" } : { kind: "unavailable", reason: data.reason });
       } catch {
         setSlugCheck({ kind: "idle" });
       }
@@ -86,7 +55,21 @@ export default function SignupForm({
   }, [slug]);
 
   if (state?.ok) {
-    return <SignupSuccess result={state} />;
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <div className="section-eyebrow" style={{ color: "var(--success)", fontSize: 13 }}>
+          ✓ Compte créé
+        </div>
+        <h2 style={{ margin: 0, fontSize: 18 }}>Bienvenue sur Physalis</h2>
+        <p className="help">
+          Votre organisation <strong>{state.slug}</strong> a été créée.<br />
+          Connectez-vous avec <strong>{state.adminEmail}</strong>.
+        </p>
+        <a href="/login" className="btn btn-primary" style={{ padding: "11px 16px", justifyContent: "center" }}>
+          Se connecter →
+        </a>
+      </div>
+    );
   }
 
   const slugAvailable = slugCheck.kind === "available";
@@ -117,10 +100,7 @@ export default function SignupForm({
           required
           maxLength={50}
           value={slug}
-          onChange={(e) => {
-            setSlug(e.target.value);
-            setSlugTouched(true);
-          }}
+          onChange={(e) => { setSlug(e.target.value); setSlugTouched(true); }}
           placeholder="acme"
           className="input input-mono"
           pattern="[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?"
@@ -130,27 +110,17 @@ export default function SignupForm({
           className="help"
           style={{
             marginTop: 4,
-            color:
-              slugCheck.kind === "available"
-                ? "var(--success)"
-                : slugCheck.kind === "unavailable"
-                  ? "var(--danger)"
-                  : "var(--muted)",
+            color: slugCheck.kind === "available"
+              ? "var(--success)"
+              : slugCheck.kind === "unavailable"
+                ? "var(--danger)"
+                : "var(--muted)",
           }}
         >
           {slugCheck.kind === "checking" && "Vérification…"}
-          {slugCheck.kind === "available" && (
-            <>
-              ✓ Disponible —{" "}
-              <span className="token-mono">{accessUrl}</span>
-            </>
-          )}
+          {slugCheck.kind === "available" && "✓ Disponible"}
           {slugCheck.kind === "unavailable" && slugError}
-          {slugCheck.kind === "idle" && (
-            <>
-              Sera votre URL : <span className="token-mono">{accessUrl}</span>
-            </>
-          )}
+          {slugCheck.kind === "idle" && "Identifiant unique de votre organisation."}
         </div>
       </div>
 
@@ -178,79 +148,20 @@ export default function SignupForm({
         />
       </div>
 
-      <div className="field">
-        <label>Plan *</label>
-        <div style={{ display: "grid", gap: 8 }}>
-          <label className="plan-option">
-            <input
-              type="radio"
-              name="plan"
-              value="FREE"
-              checked={plan === "FREE"}
-              onChange={() => setPlan("FREE")}
-            />
-            <span>
-              <strong>free</strong> — 1 org, 1 user · coffre personnel +
-              backups · <strong>gratuit permanent</strong>, pas de trial
-            </span>
-          </label>
-          <label className="plan-option">
-            <input
-              type="radio"
-              name="plan"
-              value="SHARED"
-              checked={plan === "SHARED"}
-              onChange={() => setPlan("SHARED")}
-            />
-            <span>
-              <strong>shared</strong> — 2 orgs, 5 users · multi-utilisateurs,
-              gestion serveurs, OIDC · 5€/mois après trial 14j
-            </span>
-          </label>
-          <label className="plan-option" style={{ opacity: 0.55 }}>
-            <input
-              type="radio"
-              name="plan"
-              value="DEDICATED"
-              disabled
-            />
-            <span>
-              <strong>dedicated</strong>{" "}
-              <span
-                className="role role-shared"
-                style={{ marginLeft: 4, fontSize: 11 }}
-              >
-                bientôt
-              </span>{" "}
-              — 5 orgs, 15 users · sous-domaine dédié + instance dédiée ·
-              25€/mois après trial 14j
-            </span>
-          </label>
-        </div>
-      </div>
-
-      {state && !state.ok && (
-        <p className="error-text">{state.error}</p>
-      )}
+      {state && !state.ok && <p className="error-text">{state.error}</p>}
 
       <button
         type="submit"
-        disabled={pending || (slugCheck.kind === "unavailable")}
+        disabled={pending || slugCheck.kind === "unavailable"}
         className="btn btn-primary"
         style={{ marginTop: 6, padding: "11px 16px", justifyContent: "center" }}
       >
-        {pending
-          ? "Création + provisioning…"
-          : !slugAvailable && slug
-            ? "Slug non disponible"
-            : "Créer mon espace Physalis"}
+        {pending ? "Création…" : "Créer mon organisation"}
       </button>
 
       <p className="text-xs text-muted" style={{ textAlign: "center" }}>
         Déjà un compte ?{" "}
-        <Link href="/login" className="text-accent">
-          Se connecter
-        </Link>
+        <Link href="/login" className="text-accent">Se connecter</Link>
       </p>
     </form>
   );
@@ -258,54 +169,10 @@ export default function SignupForm({
 
 function slugLabel(reason: string): string {
   switch (reason) {
-    case "empty":
-      return "Slug requis.";
-    case "invalid_format":
-      return "Format invalide. Lowercase, lettres/chiffres/tirets uniquement.";
-    case "reserved":
-      return "Ce slug est réservé.";
-    case "taken":
-      return "Ce slug est déjà utilisé.";
-    default:
-      return "Slug indisponible.";
+    case "empty": return "Slug requis.";
+    case "invalid_format": return "Format invalide. Lowercase, lettres/chiffres/tirets uniquement.";
+    case "reserved": return "Ce slug est réservé.";
+    case "taken": return "Ce slug est déjà utilisé.";
+    default: return "Slug indisponible.";
   }
-}
-
-function SignupSuccess({
-  result,
-}: {
-  result: Extract<SignupResult, { ok: true }>;
-}) {
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div
-        className="section-eyebrow"
-        style={{ color: "var(--success)", fontSize: 13 }}
-      >
-        ✓ Espace créé
-      </div>
-      <h2 style={{ margin: 0, fontSize: 18 }}>Bienvenue sur Physalis</h2>
-      <p className="help">
-        Votre espace <strong>{result.slug}</strong> a été provisionné.
-        Un email de bienvenue a été envoyé à{" "}
-        <strong>{result.adminEmail}</strong>.
-      </p>
-      <div className="field">
-        <label>URL de connexion</label>
-        <input
-          type="text"
-          value={result.loginUrl}
-          readOnly
-          className="input input-mono"
-        />
-      </div>
-      <a
-        href={result.loginUrl}
-        className="btn btn-primary"
-        style={{ padding: "11px 16px", justifyContent: "center" }}
-      >
-        Se connecter →
-      </a>
-    </div>
-  );
 }

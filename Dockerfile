@@ -10,6 +10,18 @@ COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci
 
+# --- Dev (hot-reload) ---
+# node_modules vient de deps (devDeps inclus). Le source est monté en
+# volume par docker-compose.dev.yml — ce COPY est juste pour prisma:generate.
+FROM deps AS dev
+WORKDIR /app
+COPY . .
+RUN npm run prisma:generate
+ENV NEXT_TELEMETRY_DISABLED=1
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
 # --- Production deps (runtime + prisma cli) ---
 FROM base AS prod-deps
 WORKDIR /app

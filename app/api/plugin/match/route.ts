@@ -25,13 +25,7 @@
 // `collectionSlug`) pour identification stable cote extension.
 
 import { NextResponse } from "next/server";
-// Phase 6.B (deferred) : ce route hit `public.*` via basePrisma (mode
-// legacy). Pour multi-tenant complet, il faudrait wrapper toutes les
-// Toutes les queries tenant doivent passer par le PrismaClient du tenant
-// (cf. lib/tenant-prisma.ts) pour être correctement qualifiées avec
-// `client_<slug>`. La variable `prisma` ci-dessous est résolue dynamiquement
-// dans le handler après validatePluginToken.
-import { getTenantPrisma } from "@/lib/tenant-prisma";
+import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import {
   extractPluginBearer,
@@ -99,17 +93,6 @@ export async function GET(req: Request) {
       allowOrigin,
     );
   }
-  if (!session.tenantSlug) {
-    // Token sans tenant context : impossible après la migration multi-tenant.
-    return withCors(
-      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      allowOrigin,
-    );
-  }
-  // Tenant client qualifié (?schema=client_<slug>) → toutes les queries
-  // ORM ci-dessous tapent dans le bon schéma.
-  const prisma = getTenantPrisma(session.tenantSlug);
-
   const url = new URL(req.url);
   const queryDomain = safeHostname(url.searchParams.get("domain"));
   if (!queryDomain) {
@@ -336,7 +319,6 @@ export async function GET(req: Request) {
   const accessibleCollectionIds = await getAccessibleCollectionIds(
     userId,
     session.user.role,
-    session.tenantSlug,
   );
 
   const teamEntries =

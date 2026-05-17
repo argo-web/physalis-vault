@@ -1,7 +1,6 @@
 import { Prisma, type AccessAction } from "@prisma/client";
 import { getClientIp } from "./rate-limit";
-import { withTenantSchema } from "./tenant";
-import { getStoredTenantSlug } from "./tenant-context";
+import { prisma } from "./prisma";
 
 export type AuditActor =
   | { kind: "user"; userId: string; email?: string | null }
@@ -19,13 +18,6 @@ export type AuditEntry = {
   secretKey?: string | null;
   metadata?: Prisma.InputJsonValue;
   req?: Request;
-  /**
-   * Slug du tenant pour router l'écriture vers `client_<slug>.AccessLog`.
-   * Si null/absent → l'événement est skippé (pas de fallback legacy sur
-   * `public.AccessLog`). Concerne typiquement les logins SUPERADMIN sans
-   * tenant et les rejets `tenant_required_for_non_superadmin`.
-   */
-  tenantSlug?: string | null;
 };
 
 /**
@@ -61,39 +53,9 @@ export async function logAction(entry: AuditEntry): Promise<void> {
     userAgent: userAgent ? userAgent.slice(0, 500) : null,
     metadata: entry.metadata ?? Prisma.JsonNull,
   };
-  // Résolution du slug, ordre de priorité :
-  //   1. entry.tenantSlug (passé explicitement par le caller — ex. login)
-  //   2. AsyncLocalStorage (posé par requireUser via enterTenantContext)
-  //   3. Fallback `auth()` lookup — nécessaire car `enterWith` ne propage
-  //      pas systématiquement en Next.js 15 / RSC builds prod (cf. même
-  //      pattern dans lib/prisma.ts qui motivait la mise en place de ce
-  //      fallback). Sans ce fallback, ~90% des actions tenant sont
-  //      silencieusement skippées (audit log essentiellement vide).
-  let tenantSlug = entry.tenantSlug ?? getStoredTenantSlug();
-  if (!tenantSlug) {
-    try {
-      const { auth } = await import("./auth");
-      const session = await auth();
-      tenantSlug = session?.user?.tenantSlug ?? null;
-    } catch {
-      // Hors contexte de requête (cron, scripts, tests) → session
-      // indisponible, on tombe sur le skip ci-dessous.
-      tenantSlug = null;
-    }
-  }
-  if (!tenantSlug) {
-    // SUPERADMIN sans tenant ou rejet de login anonymous : on log en
-    // console pour observabilité, pas d'écriture DB (le schéma admin
-    // n'a pas d'équivalent AccessLog ; à ajouter si besoin plus tard).
-    console.info(
-      `[audit] skip ${entry.action} (no tenant context)`,
-      entry.actor.kind === "user" ? entry.actor.email : entry.actor.kind,
-    );
-    return;
-  }
 
   try {
-    await withTenantSchema(tenantSlug, (tx) => tx.accessLog.create({ data }));
+    await prisma.accessLog.create({ data });
   } catch (err) {
     console.error("[audit] failed to record action:", err);
   }

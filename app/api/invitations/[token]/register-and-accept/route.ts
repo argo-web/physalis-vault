@@ -1,35 +1,12 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-// Public route (token-based, pas de session NextAuth). Le slug tenant est
-// extrait du Host header (<slug>.physalis.cloud) — l'invitation est stockée
-// dans le schéma client_<slug>.
-import { getTenantPrisma } from "@/lib/tenant-prisma";
+import { prisma } from "@/lib/prisma";
 import { hashInvitationToken } from "@/lib/invitations";
 import { rateLimit } from "@/lib/rate-limit";
 import { logAction } from "@/lib/audit";
 import { readJson } from "@/lib/api";
-import { isValidClientSlug } from "@/lib/validation";
 
 type Params = { params: Promise<{ token: string }> };
-
-const TENANT_DOMAIN = process.env.PHYSALIS_TENANT_DOMAIN ?? "physalis.cloud";
-
-function tenantSlugFromHost(host: string | null): string | null {
-  if (!host) return null;
-  const hostname = host.split(":")[0]?.toLowerCase();
-  if (!hostname || !hostname.endsWith(`.${TENANT_DOMAIN}`)) return null;
-  const sub = hostname.slice(0, -(TENANT_DOMAIN.length + 1));
-  if (sub.includes(".") || !isValidClientSlug(sub)) return null;
-  return sub;
-}
-
-/** En prod derrière un reverse proxy, le Host header peut pointer sur
- *  l'IP interne (ex. nginx → app:3000). On lit d'abord X-Forwarded-Host
- *  qui est posé par le proxy avec le hostname public, puis fallback Host. */
-function resolveTenantSlug(req: Request): string | null {
-  const forwarded = req.headers.get("x-forwarded-host");
-  return tenantSlugFromHost(forwarded ?? req.headers.get("host"));
-}
 
 /**
  * Register a new user account and accept an invitation in one transaction.
@@ -49,15 +26,6 @@ export async function POST(req: Request, { params }: Params) {
     windowMs: 60 * 60_000,
   });
   if (limited) return limited;
-
-  const tenantSlug = resolveTenantSlug(req);
-  if (!tenantSlug) {
-    return NextResponse.json(
-      { error: "Invitation must be accepted from the workspace URL." },
-      { status: 400 },
-    );
-  }
-  const prisma = getTenantPrisma(tenantSlug);
 
   const { token } = await params;
 

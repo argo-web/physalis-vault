@@ -10,8 +10,6 @@ import {
   requireOrgMember,
 } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
-import { requireFeature } from "@/lib/feature-guard";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -52,11 +50,6 @@ export async function POST(req: Request, { params }: Params) {
   const { slug } = await params;
   const access = await requireOrgMember(slug, "ADMIN");
   if ("error" in access) return access.error;
-
-  // Phase 5 — gestion serveurs réservée aux plans payants.
-  const tenantSlug = await getCurrentTenantSlug();
-  const featureGate = await requireFeature("server_management", tenantSlug);
-  if (featureGate) return featureGate;
 
   const body = (await readJson(req)) as
     | { name?: string; ip?: string; sshUser?: string; sshPrivateKey?: string }

@@ -12,7 +12,6 @@ export default function InvitationRegisterForm({
   organizationSlug,
   inviterEmail,
   role,
-  tenantSlug,
 }: {
   token: string;
   email: string;
@@ -20,9 +19,6 @@ export default function InvitationRegisterForm({
   organizationSlug: string;
   inviterEmail: string;
   role: string;
-  /** Slug du tenant (subdomain) — passé à signIn pour que l'auth resolve
-   *  le user dans `client_<slug>.User` au lieu de `public.User`. */
-  tenantSlug: string;
 }) {
   const router = useRouter();
   const [password, setPassword] = useState("");
@@ -52,17 +48,12 @@ export default function InvitationRegisterForm({
         setError(data?.error ?? "Création impossible.");
         return;
       }
-      // Le compte est cree. Auto-signIn avec le tenantSlug pour que
-      // authorize() résolve l'user dans client_<slug>.User. Sans ça la
-      // signIn tape sur public.User (broken depuis Phase 4) et échoue.
-      // Peut aussi echouer si rate-limit /api/auth/callback/credentials
-      // atteint (5/15min/IP) → on bascule sur l'alerte dediee.
+      // Le compte est créé. Auto-signIn avec les credentials.
       let signed: Awaited<ReturnType<typeof signIn>> | null = null;
       try {
         signed = await signIn("credentials", {
           email,
           password,
-          tenantSlug,
           redirect: false,
         });
       } catch {
@@ -72,8 +63,7 @@ export default function InvitationRegisterForm({
         return;
       }
       if (!signed || signed.error) {
-        // Auto-signIn KO (rate limit, ou autre). Redirige vers le login
-        // tenant — l'user retape ses creds là-bas. Pas de message manuel.
+        // Auto-signIn KO (rate limit, ou autre). Redirige vers le login.
         router.push("/login");
         return;
       }

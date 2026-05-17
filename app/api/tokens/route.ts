@@ -3,8 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { generateToken, hashToken } from "@/lib/auth-token";
 import { readJson, requireEnvironment, requireProjectMember } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { createTokenIndex } from "@/lib/token-index";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -95,16 +93,6 @@ export async function POST(req: Request) {
       project: { select: { slug: true } },
     },
   });
-
-  // Phase 6 — l'index admin permet la résolution tenant→token au moment
-  // de la validation Bearer. Si tenantSlug est null (mode legacy / pas
-  // encore migré), on skip — le token marchera quand même via fallback.
-  const tenantSlug = await getCurrentTenantSlug();
-  if (tenantSlug) {
-    await createTokenIndex(tokenHash, tenantSlug, "MACHINE").catch((err) => {
-      console.error("[tokens] failed to create token_index entry:", err);
-    });
-  }
 
   logAction({
     action: "TOKEN_CREATE",

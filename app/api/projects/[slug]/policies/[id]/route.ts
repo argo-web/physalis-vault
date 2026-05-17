@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { adminPrisma, prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { readJson, requireProjectMember } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 
 type Params = { params: Promise<{ slug: string; id: string }> };
 
@@ -69,7 +68,7 @@ export async function PATCH(req: Request, { params }: Params) {
     );
   }
 
-  // Charge la policy actuelle (scope projet) pour audit + mirror admin.
+  // Charge la policy actuelle (scope projet) pour audit.
   const existing = await prisma.policy.findFirst({
     where: { id, projectId: access.project.id },
     select: {
@@ -166,42 +165,6 @@ export async function PATCH(req: Request, { params }: Params) {
     },
   });
 
-  // Mirror admin.policies : delete l'ancienne entrée + insert la nouvelle.
-  // On ne fait pas un update en place pour éviter un état partiel si une
-  // étape échoue (insert peut violer la constraint unique avec une autre
-  // ligne dans admin.policies — paranoia OK).
-  const tenantSlug = await getCurrentTenantSlug();
-  if (tenantSlug) {
-    await adminPrisma.oidcPolicy
-      .deleteMany({
-        where: {
-          tenantSlug,
-          repo: existing.repo,
-          workflow: existing.workflow,
-          branch: existing.branch,
-          projectId: access.project.id,
-          environmentId: existing.environmentId,
-        },
-      })
-      .catch((err) => {
-        console.error("[policies/[id]] mirror admin.policies delete failed:", err);
-      });
-    await adminPrisma.oidcPolicy
-      .create({
-        data: {
-          repo: updated.repo,
-          workflow: updated.workflow,
-          branch: updated.branch,
-          tenantSlug,
-          projectId: access.project.id,
-          environmentId: updated.environment.id,
-        },
-      })
-      .catch((err) => {
-        console.error("[policies/[id]] mirror admin.policies insert failed:", err);
-      });
-  }
-
   logAction({
     action: "POLICY_UPDATE",
     actor: { kind: "user", userId: access.user.id, email: access.user.email },
@@ -225,7 +188,6 @@ export async function PATCH(req: Request, { params }: Params) {
       },
     },
     req,
-    tenantSlug,
   });
 
   return NextResponse.json({
@@ -267,25 +229,6 @@ export async function DELETE(req: Request, { params }: Params) {
   }
 
   await prisma.policy.delete({ where: { id: existing.id } });
-
-  // Phase 6 — supprime aussi le mirror dans admin.policies (idempotent).
-  const tenantSlug = await getCurrentTenantSlug();
-  if (tenantSlug) {
-    await adminPrisma.oidcPolicy
-      .deleteMany({
-        where: {
-          tenantSlug,
-          repo: existing.repo,
-          workflow: existing.workflow,
-          branch: existing.branch,
-          projectId: access.project.id,
-          environmentId: existing.environmentId,
-        },
-      })
-      .catch((err) => {
-        console.error("[policies/[id]] mirror admin.policies delete failed:", err);
-      });
-  }
 
   logAction({
     action: "POLICY_DELETE",

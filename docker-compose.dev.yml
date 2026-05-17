@@ -1,16 +1,30 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      target: dev
     container_name: physalis-dev
     restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql://physalis:${DB_PASSWORD}@db:5432/physalis
       PORT: "3000"
+      NODE_ENV: development
+      # Polling requis si Docker Desktop WSL2 ne propage pas les événements
+      # inotify — sans ça, Next.js ne détecte pas les changements de fichiers.
+      WATCHPACK_POLLING: "true"
+    command: >
+      sh -c "node ./node_modules/prisma/build/index.js migrate deploy &&
+             node ./scripts/bootstrap-admin.mjs &&
+             npm run dev"
     ports:
       - "${PORT:-3000}:3000"
-    tmpfs:
-      - /app/.next/cache
+    volumes:
+      # Source code monté en live — chaque modification déclenche HMR.
+      - .:/app
+      # node_modules isolé en volume nommé : évite que le bind mount
+      # du host (qui n'a pas de node_modules) écrase les packages de l'image.
+      - node_modules_dev:/app/node_modules
     depends_on:
       db:
         condition: service_healthy
@@ -38,6 +52,7 @@ services:
 
 volumes:
   pg_data_dev:
+  node_modules_dev:
 
 networks:
   internal:

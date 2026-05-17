@@ -11,7 +11,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { readJson, requireUser } from "@/lib/api";
 import { isValidEmail, isValidSecretKey } from "@/lib/validation";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { logAction } from "@/lib/audit";
 import { generateEcdhKeypair } from "@/lib/secret-request-crypto";
 import {
@@ -19,7 +18,6 @@ import {
   deriveStatus,
   generateSecretRequestToken,
   hashSecretRequestToken,
-  indexSecretRequestToken,
   type SecretRequestStatus,
 } from "@/lib/secret-request";
 import { sendSecretRequestEmail } from "@/lib/email";
@@ -143,14 +141,6 @@ export async function POST(req: Request) {
   const userRes = await requireUser();
   if ("error" in userRes) return userRes.error;
   const { user } = userRes;
-  const tenantSlug = await getCurrentTenantSlug();
-
-  if (!tenantSlug) {
-    return NextResponse.json(
-      { error: "Tenant context required" },
-      { status: 401 },
-    );
-  }
 
   const body = (await readJson(req)) as PostBody | null;
   if (
@@ -239,11 +229,6 @@ export async function POST(req: Request) {
     select: { id: true, expiresAt: true },
   });
 
-  // Index admin pour résolution cross-tenant à l'ouverture du lien public.
-  await indexSecretRequestToken(tokenHash, tenantSlug).catch((err) => {
-    console.error("[secret-requests] failed to index token:", err);
-  });
-
   const requestUrl = `https://${SHARED_PORTAL}/request/${token}`;
 
   // Envoi email automatique si destinataire fourni (best-effort).
@@ -274,7 +259,6 @@ export async function POST(req: Request) {
       hasImportTarget: Boolean(environmentName && secretKey),
     },
     req,
-    tenantSlug,
   });
 
   return NextResponse.json(

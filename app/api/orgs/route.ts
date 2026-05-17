@@ -3,9 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { readJson, requireUser } from "@/lib/api";
 import { uniqueOrgSlug } from "@/lib/orgs";
 import { logAction } from "@/lib/audit";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
-import { checkOrgQuota, findClientIdBySlug } from "@/lib/quotas";
-import { logAdminAction } from "@/lib/admin-audit";
 
 export async function GET() {
   const userRes = await requireUser();
@@ -45,29 +42,6 @@ export async function POST(req: Request) {
   }
 
   const name = body.name.trim();
-
-  // Phase 3.3 — quota d'organisations. En mode legacy (tenantSlug null),
-  // checkOrgQuota retourne `{ allowed: true }` → bypass.
-  const tenantSlug = await getCurrentTenantSlug();
-  const quota = await checkOrgQuota(tenantSlug);
-  if (!quota.allowed) {
-    await logAdminAction({
-      action: "org.quota_exceeded",
-      clientId: await findClientIdBySlug(tenantSlug),
-      actor: user.email,
-      metadata: {
-        tenantSlug,
-        current: quota.current,
-        max: quota.max,
-        attemptedName: name,
-      },
-    });
-    return NextResponse.json(
-      { error: "Quota d'organisations atteint pour votre plan" },
-      { status: 403 },
-    );
-  }
-
   const slug = await uniqueOrgSlug(name);
 
   const org = await prisma.organization.create({

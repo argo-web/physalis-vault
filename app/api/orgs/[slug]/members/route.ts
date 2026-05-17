@@ -10,14 +10,6 @@ import {
 } from "@/lib/invitations";
 import { sendInvitationEmail } from "@/lib/email";
 import { logAction } from "@/lib/audit";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
-import {
-  checkUserQuota,
-  findClientIdBySlug,
-  tenantUserExists,
-} from "@/lib/quotas";
-import { logAdminAction } from "@/lib/admin-audit";
-import { requireFeature } from "@/lib/feature-guard";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -60,12 +52,6 @@ export async function POST(req: Request, { params }: Params) {
   const { slug } = await params;
   const access = await requireOrgMember(slug, "ADMIN");
   if ("error" in access) return access.error;
-
-  // Phase 5 — feature gate : inviter d'autres users requiert un plan
-  // payant (FREE = 1 seul user, multi_users non dispo).
-  const tenantSlug = await getCurrentTenantSlug();
-  const featureGate = await requireFeature("multi_users", tenantSlug);
-  if (featureGate) return featureGate;
 
   // Body : soit { email } (legacy email-based) soit { targetUserId } (in-app
   // pour un user deja sur la plateforme). Si les 2 sont fournis,
@@ -192,34 +178,6 @@ export async function POST(req: Request, { params }: Params) {
     }
   }
 
-  // Phase 3.4 — quota d'utilisateurs distincts. Appliqué SEULEMENT si
-  // l'invitation va créer un nouveau compte (pas si l'user existe déjà
-  // dans le schéma tenant). En mode legacy (tenantSlug=null), bypass.
-  // Note : `tenantSlug` réutilisé du feature gate plus haut.
-  const inviteeAlreadyInTenant = await tenantUserExists(tenantSlug, email);
-  if (!inviteeAlreadyInTenant) {
-    const quota = await checkUserQuota(tenantSlug);
-    if (!quota.allowed) {
-      await logAdminAction({
-        action: "user.quota_exceeded",
-        clientId: await findClientIdBySlug(tenantSlug),
-        actor: access.user.email,
-        metadata: {
-          tenantSlug,
-          current: quota.current,
-          max: quota.max,
-          invitedEmail: email,
-        },
-      });
-      return NextResponse.json(
-        {
-          error:
-            "Quota d'utilisateurs atteint pour votre plan. Passez à l'offre supérieure pour inviter davantage de membres.",
-        },
-        { status: 403 },
-      );
-    }
-  }
   // Conflit avec une invitation in-app pour le meme email.
   const existingInv = await prisma.invitation.findFirst({
     where: {

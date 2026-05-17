@@ -7,7 +7,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/api";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { logAction } from "@/lib/audit";
 import { deleteTokenIndex } from "@/lib/token-index";
 import { deriveStatus } from "@/lib/secret-request";
@@ -85,7 +84,6 @@ export async function GET(_req: Request, { params }: Params) {
 export async function DELETE(req: Request, { params }: Params) {
   const userRes = await requireUser();
   if ("error" in userRes) return userRes.error;
-  const tenantSlug = await getCurrentTenantSlug();
   const { id } = await params;
   const access = await loadAndAssertAccess(id, userRes.user.id);
   if ("error" in access) return access.error;
@@ -116,7 +114,6 @@ export async function DELETE(req: Request, { params }: Params) {
     targetId: sr.id,
     metadata: { label: sr.label, hadSubmittedSecret: Boolean(sr.submittedAt) },
     req,
-    tenantSlug,
   });
 
   return NextResponse.json({ ok: true });

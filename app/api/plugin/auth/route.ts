@@ -1,14 +1,11 @@
 // POST /api/plugin/auth
 //
 // Authentification de l'extension navigateur. Body : { email, password,
-// totp, tenantSlug, ttl? }. Retourne un sessionToken `sv_plugin_<hex>`
+// totp, ttl? }. Retourne un sessionToken `sv_plugin_<hex>`
 // valide PLUGIN_SESSION_TTL secondes (defaut 4h). Le token n'est PAS
 // renouvelable — il faut re-saisir le TOTP a expiration.
 //
-// Architecture multi-tenant : `tenantSlug` est OBLIGATOIRE — il identifie
-// le schéma client_<slug> dans lequel chercher l'user et créer le
-// PluginToken. L'index admin.token_index est mis à jour pour permettre
-// la résolution lors de la validation Bearer (cf. validatePluginToken).
+// Architecture self-host single-tenant : le tenantSlug n'est plus requis.
 //
 // Securite :
 //   - Aucune session NextAuth requise (cf. design decision #1) : l'extension
@@ -21,7 +18,7 @@
 
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { adminPrisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import { verifyTotp, findBackupCodeIndex } from "@/lib/totp";
 import {
@@ -39,9 +36,6 @@ import {
 import { rateLimit } from "@/lib/rate-limit";
 import { readJson, isValidEmail } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { withTenantSchema } from "@/lib/tenant";
-import { createTokenIndex } from "@/lib/token-index";
-import { isValidClientSlug } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -54,13 +48,10 @@ export async function OPTIONS(req: Request) {
 export async function POST(req: Request) {
   const cors = checkPluginOrigin(req);
   if (!cors.ok) {
-    // Origin manquante / non whitelistee → 403 sans header CORS, le browser
-    // bloque la reponse de toute facon.
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const allowOrigin = cors.allowOrigin;
 
-  // Rate-limit avant tout (IP-based, valable meme pour les requetes mal formees).
   const limited = rateLimit(req, "plugin-auth", RATE_LIMIT);
   if (limited) return withCors(limited, allowOrigin);
 
@@ -77,12 +68,11 @@ export async function POST(req: Request) {
     !body ||
     typeof body.email !== "string" ||
     typeof body.password !== "string" ||
-    typeof body.totp !== "string" ||
-    typeof body.tenantSlug !== "string"
+    typeof body.totp !== "string"
   ) {
     return withCors(
       NextResponse.json(
-        { error: "email, password, totp and tenantSlug are required" },
+        { error: "email, password and totp are required" },
         { status: 400 },
       ),
       allowOrigin,
@@ -92,7 +82,6 @@ export async function POST(req: Request) {
   const email = body.email.trim().toLowerCase();
   const password = body.password;
   const totp = body.totp.trim();
-  const tenantSlug = body.tenantSlug.trim().toLowerCase();
 
   if (!isValidEmail(email)) {
     return withCors(
@@ -100,44 +89,9 @@ export async function POST(req: Request) {
       allowOrigin,
     );
   }
-  if (!isValidClientSlug(tenantSlug)) {
-    return withCors(
-      NextResponse.json({ error: "Invalid tenantSlug" }, { status: 400 }),
-      allowOrigin,
-    );
-  }
-
-  // Vérifie que le tenant existe et est actif (sinon login refusé sans
-  // donner d'indice sur l'existence du compte côté pre-auth).
-  const client = await adminPrisma.client.findUnique({
-    where: { slug: tenantSlug },
-    select: { status: true },
-  });
-  if (
-    !client ||
-    client.status === "SUSPENDED" ||
-    client.status === "CANCELLED"
-  ) {
-    logAction({
-      action: "PLUGIN_AUTH_FAILURE",
-      actor: { kind: "anonymous" },
-      metadata: {
-        reason: !client ? "tenant_not_found" : "tenant_inactive",
-        email,
-        tenantSlug,
-      },
-      req,
-    });
-    return withCors(
-      NextResponse.json({ error: "Invalid credentials" }, { status: 401 }),
-      allowOrigin,
-    );
-  }
 
   // TTL : si l'extension demande une duree explicite, doit appartenir a
   // la liste fermee ALLOWED_TTLS (1h / 4h / 8h). Sinon → defaut env.
-  // Validation strict avant tout traitement (pre-auth) pour eviter qu'un
-  // client mal forme apprenne quoi que ce soit sur l'existence du compte.
   let ttlSeconds = getPluginSessionTtl();
   if (body.ttl !== undefined) {
     if (!isAllowedTtl(body.ttl)) {
@@ -154,8 +108,6 @@ export async function POST(req: Request) {
     ttlSeconds = body.ttl;
   }
 
-  // Toute l'auth (lookup + bcrypt + 2FA + token create) dans le contexte
-  // tenant. Retourne l'objet final ou null si rejet à logger.
   type AuthFailure = {
     reason: string;
     httpStatus: number;
@@ -175,8 +127,7 @@ export async function POST(req: Request) {
   const token = generatePluginToken();
   const tokenHash = hashPluginToken(token);
 
-  const result: AuthFailure | AuthSuccess = await withTenantSchema(
-    tenantSlug,
+  const result: AuthFailure | AuthSuccess = await prisma.$transaction(
     async (tx) => {
       const user = await tx.user.findUnique({
         where: { email },
@@ -227,7 +178,6 @@ export async function POST(req: Request) {
       }
 
       if (!user.twoFactorSecret || !user.twoFactorIv || !user.twoFactorTag) {
-        // Etat incoherent : enabled=true sans secret. Ne devrait jamais arriver.
         return {
           reason: "2fa_state_inconsistent",
           httpStatus: 500,
@@ -288,9 +238,6 @@ export async function POST(req: Request) {
     },
   );
 
-  // Rejet : log + retour HTTP. Audit dans le tenant si possible (le user
-  // existe), sinon on log juste côté serveur (audit.ts skip si pas de slug,
-  // mais ici on a le slug donc l'audit va bien dans client_<slug>.AccessLog).
   if ("reason" in result) {
     logAction({
       action: "PLUGIN_AUTH_FAILURE",
@@ -299,9 +246,8 @@ export async function POST(req: Request) {
           ? { kind: "anonymous" }
           : { kind: "user", userId: result.actor.userId, email: result.actor.email },
       organizationId: result.organizationId,
-      metadata: { reason: result.reason, email, tenantSlug },
+      metadata: { reason: result.reason, email },
       req,
-      tenantSlug,
     });
     return withCors(
       NextResponse.json(result.errorBody, { status: result.httpStatus }),
@@ -309,21 +255,13 @@ export async function POST(req: Request) {
     );
   }
 
-  // Succès — index admin pour permettre la validation tenant-aware au
-  // prochain GET /api/plugin/match. Le PluginToken est déjà inséré dans
-  // client_<slug>.PluginToken via la transaction au-dessus.
-  await createTokenIndex(tokenHash, tenantSlug, "PLUGIN").catch((err) => {
-    console.error("[plugin-auth] failed to create token_index entry:", err);
-  });
-
   if (result.acceptedVia === "backup") {
     logAction({
       action: "BACKUP_CODE_USED",
       actor: { kind: "user", userId: result.user.id, email: result.user.email },
       organizationId: result.organizationId,
-      metadata: { source: "plugin", tenantSlug },
+      metadata: { source: "plugin" },
       req,
-      tenantSlug,
     });
   }
 
@@ -338,10 +276,8 @@ export async function POST(req: Request) {
       acceptedVia: result.acceptedVia,
       ttlSeconds,
       ttlSource,
-      tenantSlug,
     },
     req,
-    tenantSlug,
   });
 
   return withCors(

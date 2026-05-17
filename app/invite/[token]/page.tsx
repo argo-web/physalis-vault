@@ -1,24 +1,10 @@
 import Link from "next/link";
 import Image from "next/image";
-import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
-import { getTenantPrisma } from "@/lib/tenant-prisma";
+import { prisma } from "@/lib/prisma";
 import { hashInvitationToken } from "@/lib/invitations";
-import { isValidClientSlug } from "@/lib/validation";
 import AcceptInvitationButton from "./accept-button";
 import InvitationRegisterForm from "./register-form";
-
-const TENANT_DOMAIN = process.env.PHYSALIS_TENANT_DOMAIN ?? "physalis.cloud";
-
-/** Extrait le slug tenant depuis le Host header (ex: "gael.physalis.cloud" → "gael"). */
-function tenantSlugFromHost(host: string | null): string | null {
-  if (!host) return null;
-  const hostname = host.split(":")[0]?.toLowerCase();
-  if (!hostname || !hostname.endsWith(`.${TENANT_DOMAIN}`)) return null;
-  const sub = hostname.slice(0, -(TENANT_DOMAIN.length + 1));
-  if (sub.includes(".") || !isValidClientSlug(sub)) return null;
-  return sub;
-}
 
 export default async function InvitePage({
   params,
@@ -26,30 +12,6 @@ export default async function InvitePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-
-  // L'invité arrive depuis un email externe → pas de session ni de
-  // contexte tenant en AsyncLocalStorage. Le slug doit venir du subdomain
-  // du Host header (`<slug>.physalis.cloud`).
-  // X-Forwarded-Host prioritaire : derrière un reverse proxy (NPM, etc.)
-  // le Host header pointe sur l'IP interne du container — c'est le
-  // X-Forwarded-Host qui contient le hostname public vu par l'utilisateur.
-  const reqHeaders = await headers();
-  const tenantSlug = tenantSlugFromHost(
-    reqHeaders.get("x-forwarded-host") ?? reqHeaders.get("host"),
-  );
-  if (!tenantSlug) {
-    return (
-      <div className="login-wrap">
-        <div className="login-card">
-          <p className="help" style={{ textAlign: "center" }}>
-            Cette invitation doit être ouverte depuis l&apos;URL de votre
-            workspace (ex: <code>monworkspace.physalis.cloud/invite/...</code>).
-          </p>
-        </div>
-      </div>
-    );
-  }
-  const prisma = getTenantPrisma(tenantSlug);
 
   const invitation = await prisma.invitation.findUnique({
     where: { tokenHash: hashInvitationToken(token) },
@@ -133,7 +95,6 @@ export default async function InvitePage({
               organizationSlug={invitation.organization.slug}
               inviterEmail={invitation.invitedBy.email}
               role={invitation.role}
-              tenantSlug={tenantSlug}
             />
           </div>
         </div>

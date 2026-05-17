@@ -28,7 +28,6 @@ import type { ProjectRole, Role, VaultRole } from "@prisma/client";
 import { prisma } from "./prisma";
 import { requireUser, type AuthedUser } from "./api";
 import { isPlatformAdmin } from "./roles";
-import { withTenantSchema } from "./tenant";
 
 const VAULT_ROLE_RANK: Record<VaultRole, number> = {
   VIEWER: 1,
@@ -84,78 +83,71 @@ export function hasVaultRole(actual: VaultRole, required: VaultRole): boolean {
 export async function getAccessibleCollectionIds(
   userId: string,
   userRole: Role,
-  tenantSlug: string | null,
 ): Promise<string[]> {
-  // Wrap dans withTenantSchema(slug) pour router vers le bon schéma.
-  // Si tenantSlug=null (cas théorique : token sans entrée dans
-  // admin.token_index), on retourne un set vide — pas de fallback public.
-  if (!tenantSlug) return [];
-  return withTenantSchema(tenantSlug, async (tx) => {
-    if (isPlatformAdmin(userRole)) {
-      const all = await tx.teamVaultCollection.findMany({
-        select: { id: true },
-      });
-      return all.map((c) => c.id);
-    }
-
-    // Toutes les requetes en parallele.
-    const [direct, orgMemberships, projectMemberships] = await Promise.all([
-      tx.teamVaultMember.findMany({
-        where: { userId },
-        select: { collectionId: true },
-      }),
-      tx.orgMember.findMany({
-        where: { userId, role: { in: ["DEV", "ADMIN", "OWNER"] } },
-        select: { organizationId: true, role: true },
-      }),
-      tx.projectMember.findMany({
-        where: { userId },
-        select: { projectId: true },
-      }),
-    ]);
-
-    // Tous les roles (DEV/ADMIN/OWNER) donnent acces aux collections org
-    // de l'org. Pour les collections projet, l'heritage transitif depuis
-    // l'org concerne aussi DEV (EDITOR implicite) ET ADMIN/OWNER (OWNER
-    // implicite) — un user explicitement ProjectMember reste pris en
-    // compte separement via la branche projectMemberIds.
-    const orgScopeOrgIds = orgMemberships.map((o) => o.organizationId);
-    const projectMemberIds = projectMemberships.map((p) => p.projectId);
-
-    const collections = await tx.teamVaultCollection.findMany({
-      where: {
-        OR: [
-          // 1. Membership direct sur la collection (via TeamVaultMember)
-          { id: { in: direct.map((d) => d.collectionId) } },
-          // 2. Collections org dont l'user est OrgDEV/ADMIN/OWNER
-          ...(orgScopeOrgIds.length > 0
-            ? [{ organizationId: { in: orgScopeOrgIds } }]
-            : []),
-          // 3. Collections projet dont l'user est ProjectMember (any role)
-          ...(projectMemberIds.length > 0
-            ? [{ projectId: { in: projectMemberIds } }]
-            : []),
-          // 4. Collections projet dont le projet appartient a une org ou
-          //    l'user est OrgDEV/ADMIN/OWNER (heritage transitif). Un
-          //    ProjectMember=VIEWER explicite obtient quand meme VIEWER
-          //    via la branche 3 (qui shadow l'EDITOR implicite, mais ici
-          //    on s'en moque : on ne calcule que la VISIBILITE, pas le
-          //    role effectif).
-          ...(orgScopeOrgIds.length > 0
-            ? [
-                {
-                  projectId: { not: null },
-                  project: { organizationId: { in: orgScopeOrgIds } },
-                } as const,
-              ]
-            : []),
-        ],
-      },
+  if (isPlatformAdmin(userRole)) {
+    const all = await prisma.teamVaultCollection.findMany({
       select: { id: true },
     });
+    return all.map((c) => c.id);
+  }
 
-    return collections.map((c) => c.id);
+  // Toutes les requetes en parallele.
+  const [direct, orgMemberships, projectMemberships] = await Promise.all([
+    prisma.teamVaultMember.findMany({
+      where: { userId },
+      select: { collectionId: true },
+    }),
+    prisma.orgMember.findMany({
+      where: { userId, role: { in: ["DEV", "ADMIN", "OWNER"] } },
+      select: { organizationId: true, role: true },
+    }),
+    prisma.projectMember.findMany({
+      where: { userId },
+      select: { projectId: true },
+    }),
+  ]);
+
+  // Tous les roles (DEV/ADMIN/OWNER) donnent acces aux collections org
+  // de l'org. Pour les collections projet, l'heritage transitif depuis
+  // l'org concerne aussi DEV (EDITOR implicite) ET ADMIN/OWNER (OWNER
+  // implicite) — un user explicitement ProjectMember reste pris en
+  // compte separement via la branche projectMemberIds.
+  const orgScopeOrgIds = orgMemberships.map((o) => o.organizationId);
+  const projectMemberIds = projectMemberships.map((p) => p.projectId);
+
+  const collections = await prisma.teamVaultCollection.findMany({
+    where: {
+      OR: [
+        // 1. Membership direct sur la collection (via TeamVaultMember)
+        { id: { in: direct.map((d) => d.collectionId) } },
+        // 2. Collections org dont l'user est OrgDEV/ADMIN/OWNER
+        ...(orgScopeOrgIds.length > 0
+          ? [{ organizationId: { in: orgScopeOrgIds } }]
+          : []),
+        // 3. Collections projet dont l'user est ProjectMember (any role)
+        ...(projectMemberIds.length > 0
+          ? [{ projectId: { in: projectMemberIds } }]
+          : []),
+        // 4. Collections projet dont le projet appartient a une org ou
+        //    l'user est OrgDEV/ADMIN/OWNER (heritage transitif). Un
+        //    ProjectMember=VIEWER explicite obtient quand meme VIEWER
+        //    via la branche 3 (qui shadow l'EDITOR implicite, mais ici
+        //    on s'en moque : on ne calcule que la VISIBILITE, pas le
+        //    role effectif).
+        ...(orgScopeOrgIds.length > 0
+          ? [
+              {
+                projectId: { not: null },
+                project: { organizationId: { in: orgScopeOrgIds } },
+              } as const,
+            ]
+          : []),
+      ],
+    },
+    select: { id: true },
   });
+
+  return collections.map((c) => c.id);
 }
 
 /**

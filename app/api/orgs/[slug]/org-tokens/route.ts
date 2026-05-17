@@ -19,7 +19,6 @@ import type { OrgTokenScope } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { readJson, requireOrgMember } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { createTokenIndex } from "@/lib/token-index";
 import {
   generateOrgToken,
   tokenPrefixForUi,
@@ -29,7 +28,6 @@ import {
   orgTokenAccessLevel,
   validateDevTokenCreation,
 } from "@/lib/org-token-rbac";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { createHash } from "crypto";
 
 const NAME_MAX = 100;
@@ -289,14 +287,6 @@ export async function POST(req: Request, { params }: Params) {
       createdAt: true,
     },
   });
-
-  // Index admin pour résolution multi-tenant au runtime.
-  const tenantSlug = await getCurrentTenantSlug();
-  if (tenantSlug) {
-    await createTokenIndex(tokenHash, tenantSlug, "ORG").catch((err) => {
-      console.error("[org-tokens] failed to create token_index entry:", err);
-    });
-  }
 
   logAction({
     action: "ORG_TOKEN_CREATE",

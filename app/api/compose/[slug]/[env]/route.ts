@@ -106,7 +106,6 @@ export async function GET(req: NextRequest, { params }: Params) {
     targetId: machineToken.environmentId,
     metadata: { bytes: environment.dockerCompose.length },
     req,
-    tenantSlug: machineToken.tenantSlug,
   });
 
   return new NextResponse(environment.dockerCompose, {

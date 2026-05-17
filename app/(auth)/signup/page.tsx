@@ -1,19 +1,10 @@
-// /signup — Page publique de création d'un nouvel espace Physalis.
-//
-// Phase 4.1 — pas d'auth requise. Crée admin.clients + schéma tenant +
-// premier user admin via lib/provisioning. Email de bienvenue Mailgun
-// best-effort.
-
 import Image from "next/image";
 import SignupForm from "./signup-form";
 
 export const metadata = {
   title: "Créer un espace Physalis",
-  description: "Créez votre espace Physalis self-hosted. 14 jours d'essai gratuit.",
+  description: "Créez votre organisation sur cette instance Physalis.",
 };
-
-const TENANT_DOMAIN = process.env.PHYSALIS_TENANT_DOMAIN ?? "physalis.cloud";
-const SHARED_PORTAL = process.env.PHYSALIS_SHARED_PORTAL ?? "vault.physalis.cloud";
 
 export default function SignupPage() {
   return (
@@ -29,10 +20,10 @@ export default function SignupPage() {
         />
         <div className="login-brand-text">
           <div className="login-brand-name">Physalis</div>
-          <div className="login-brand-tag">Créer un espace</div>
+          <div className="login-brand-tag">Créer une organisation</div>
         </div>
       </div>
-      <SignupForm tenantDomain={TENANT_DOMAIN} sharedPortal={SHARED_PORTAL} />
+      <SignupForm />
     </div>
   );
 }

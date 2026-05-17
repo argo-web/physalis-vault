@@ -16,17 +16,12 @@
 //   - Audit `DEPLOY_AUTHORIZED` / `DEPLOY_DENIED` sur tous les chemins.
 
 import { NextResponse } from "next/server";
-// Multi-tenant : on résout la cible via admin.policies (qui a tenant_slug +
-// project_id + environment_id), puis on switch sur le PrismaClient du tenant
-// pour décrypter les secrets et la clé SSH.
-import { adminPrisma } from "@/lib/prisma";
-import { getTenantPrisma } from "@/lib/tenant-prisma";
+import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/crypto";
 import { logAction } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import { extractBearer, verifyGithubOidcToken } from "@/lib/oidc";
 import { defaultDeployPath, readJson } from "@/lib/api";
-import { isValidClientSlug } from "@/lib/validation";
 
 // Force Node runtime : jose, node:crypto, prisma — pas Edge.
 export const runtime = "nodejs";
@@ -41,9 +36,6 @@ export async function POST(req: Request) {
 
   const verified = await verifyGithubOidcToken(token);
   if (!verified.ok) {
-    // On n'audit pas les missing_token / wrong_audience individuellement
-    // (probes / scans), mais on logge les autres echecs avec le minimum
-    // de metadata pour aider au diagnostic.
     if (
       verified.reason === "missing_token" ||
       verified.reason === "wrong_audience" ||
@@ -91,21 +83,13 @@ export async function POST(req: Request) {
     );
   }
 
-  // 1. Lookup admin.policies par claims OIDC (repo, workflow, branch).
-  //    Plusieurs tenants pourraient avoir une policy avec les mêmes claims
-  //    (peu probable mais pas impossible) → on les itère et on filtre par
-  //    le (project, environment) du body pour disambiguer.
-  const candidates = await adminPrisma.oidcPolicy.findMany({
-    where: { repo: repository, workflow: workflowFile, branch },
-    select: {
-      id: true,
-      tenantSlug: true,
-      projectId: true,
-      environmentId: true,
-    },
+  // Lookup policy par claims OIDC (repo, workflow, branch) + project slug + env name.
+  const project = await prisma.project.findUnique({
+    where: { slug: projectSlug },
+    select: { id: true, slug: true, organizationId: true },
   });
 
-  if (candidates.length === 0) {
+  if (!project) {
     logAction({
       action: "DEPLOY_DENIED",
       actor: { kind: "anonymous" },
@@ -122,79 +106,60 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // 2. Pour chaque candidat, vérifie que le project.slug + environment.name
-  //    matchent ceux du body. Le premier qui match gagne.
-  type Match = {
-    tenantSlug: string;
-    policyId: string;
-    project: { id: string; slug: string; organizationId: string };
-    environment: {
-      id: string;
-      name: string;
-      deployPath: string | null;
-      dockerCompose: string | null;
+  const environment = await prisma.environment.findUnique({
+    where: { projectId_name: { projectId: project.id, name: envName } },
+    select: {
+      id: true,
+      name: true,
+      deployPath: true,
+      dockerCompose: true,
       server: {
-        id: string;
-        name: string;
-        ip: string;
-        sshUser: string;
-        encryptedKey: string;
-        iv: string;
-        tag: string;
-      } | null;
-      secrets: Array<{
-        key: string;
-        encryptedValue: string;
-        iv: string;
-        tag: string;
-      }>;
-    };
-  };
-  let match: Match | null = null;
-  for (const c of candidates) {
-    if (!isValidClientSlug(c.tenantSlug)) continue;
-    const tenantPrisma = getTenantPrisma(c.tenantSlug);
-    const project = await tenantPrisma.project.findUnique({
-      where: { id: c.projectId },
-      select: { id: true, slug: true, organizationId: true },
-    });
-    if (!project || project.slug !== projectSlug) continue;
-
-    const environment = await tenantPrisma.environment.findUnique({
-      where: { id: c.environmentId },
-      select: {
-        id: true,
-        name: true,
-        deployPath: true,
-        dockerCompose: true,
-        server: {
-          select: {
-            id: true,
-            name: true,
-            ip: true,
-            sshUser: true,
-            encryptedKey: true,
-            iv: true,
-            tag: true,
-          },
-        },
-        secrets: {
-          select: { key: true, encryptedValue: true, iv: true, tag: true },
+        select: {
+          id: true,
+          name: true,
+          ip: true,
+          sshUser: true,
+          encryptedKey: true,
+          iv: true,
+          tag: true,
         },
       },
-    });
-    if (!environment || environment.name !== envName) continue;
+      secrets: {
+        select: { key: true, encryptedValue: true, iv: true, tag: true },
+      },
+    },
+  });
 
-    match = {
-      tenantSlug: c.tenantSlug,
-      policyId: c.id,
-      project,
-      environment,
-    };
-    break;
+  if (!environment) {
+    logAction({
+      action: "DEPLOY_DENIED",
+      actor: { kind: "anonymous" },
+      metadata: {
+        reason: "policy_not_found",
+        repository,
+        workflow: workflowFile,
+        branch,
+        project: projectSlug,
+        environment: envName,
+      },
+      req,
+    });
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!match) {
+  // Vérifie qu'une Policy match les claims OIDC.
+  const policy = await prisma.policy.findFirst({
+    where: {
+      repo: repository,
+      workflow: workflowFile,
+      branch,
+      projectId: project.id,
+      environmentId: environment.id,
+    },
+    select: { id: true },
+  });
+
+  if (!policy) {
     logAction({
       action: "DEPLOY_DENIED",
       actor: { kind: "anonymous" },
@@ -205,58 +170,10 @@ export async function POST(req: Request) {
         branch,
         project: projectSlug,
         environment: envName,
-        candidatesCount: candidates.length,
       },
       req,
     });
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const { tenantSlug, project, environment, policyId } = match;
-
-  // Garde-fou plan FREE — granularité par organisation.
-  // En FREE, le quota inclut 1 organisation. La "primary org" du tenant
-  // (la plus ancienne) est considérée comme couverte par le plan ; les
-  // autres organisations sont excédentaires et leurs déploiements OIDC
-  // sont bloqués. Cette granularité permet à un client downgradé qui a
-  // gardé plusieurs orgs de continuer à déployer son org principale,
-  // tout en bloquant les déploiements automatiques sur les ressources
-  // hors quota.
-  const tenantClient = await adminPrisma.client.findUnique({
-    where: { slug: tenantSlug },
-    select: { plan: true },
-  });
-  if (tenantClient?.plan === "FREE") {
-    const tenantPrisma = getTenantPrisma(tenantSlug);
-    const primaryOrg = await tenantPrisma.organization.findFirst({
-      orderBy: { createdAt: "asc" },
-      select: { id: true },
-    });
-    if (!primaryOrg || primaryOrg.id !== project.organizationId) {
-      logAction({
-        action: "DEPLOY_DENIED",
-        actor: { kind: "anonymous" },
-        organizationId: project.organizationId,
-        projectId: project.id,
-        environmentId: environment.id,
-        targetType: "Policy",
-        targetId: policyId,
-        metadata: {
-          reason: "free_plan_org_excess",
-          projectOrgId: project.organizationId,
-          primaryOrgId: primaryOrg?.id ?? null,
-        },
-        req,
-        tenantSlug,
-      });
-      return NextResponse.json(
-        {
-          error:
-            "Plan FREE — déploiements OIDC autorisés uniquement pour l'organisation principale (la plus ancienne). Souscrivez un plan payant pour réactiver les déploiements sur les autres organisations.",
-        },
-        { status: 403 },
-      );
-    }
   }
 
   if (!environment.server) {
@@ -267,7 +184,7 @@ export async function POST(req: Request) {
       projectId: project.id,
       environmentId: environment.id,
       targetType: "Policy",
-      targetId: policyId,
+      targetId: policy.id,
       metadata: {
         reason: "no_server",
         repository,
@@ -277,7 +194,6 @@ export async function POST(req: Request) {
         environment: envName,
       },
       req,
-      tenantSlug,
     });
     return NextResponse.json(
       { error: "Environment is not bound to a server" },
@@ -309,9 +225,8 @@ export async function POST(req: Request) {
 
   // Registry credentials : convention sur 3 OrgSecrets reservés
   // (REGISTRY_PAT + REGISTRY_USER obligatoires, REGISTRY_URL optionnel
-  // avec defaut ghcr.io). Renvoyés typés à part de `secrets` pour
-  // éviter qu'ils transitent par le `.env` du conteneur.
-  const registry = await resolveRegistry(tenantSlug, project.organizationId);
+  // avec defaut ghcr.io).
+  const registry = await resolveRegistry(project.organizationId);
 
   logAction({
     action: "DEPLOY_AUTHORIZED",
@@ -320,7 +235,7 @@ export async function POST(req: Request) {
     projectId: project.id,
     environmentId: environment.id,
     targetType: "Policy",
-    targetId: policyId,
+    targetId: policy.id,
     metadata: {
       repository,
       workflow: workflowFile,
@@ -335,7 +250,6 @@ export async function POST(req: Request) {
       usedDefaultDeployPath,
     },
     req,
-    tenantSlug,
   });
 
   return NextResponse.json({
@@ -357,11 +271,9 @@ const REGISTRY_URL_KEY = "REGISTRY_URL";
 const DEFAULT_REGISTRY_URL = "ghcr.io";
 
 async function resolveRegistry(
-  tenantSlug: string,
   organizationId: string,
 ): Promise<{ url: string; user: string; pat: string } | null> {
-  const tenantPrisma = getTenantPrisma(tenantSlug);
-  const orgSecrets = await tenantPrisma.orgSecret.findMany({
+  const orgSecrets = await prisma.orgSecret.findMany({
     where: {
       organizationId,
       key: { in: [REGISTRY_PAT_KEY, REGISTRY_USER_KEY, REGISTRY_URL_KEY] },

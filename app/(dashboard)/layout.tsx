@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getCurrentOrgSlug } from "@/lib/api";
+import { isSuperadmin } from "@/lib/roles";
 import OrgSwitcher from "./org-switcher";
 import HeaderNav from "./header-nav";
 
@@ -59,6 +60,11 @@ export default async function DashboardLayout({
           <HeaderNav />
         </div>
         <div className="flex items-center gap-3">
+          {isSuperadmin(session.user.role) && (
+            <Link href="/admin" className="btn btn-ghost btn-sm">
+              Admin
+            </Link>
+          )}
           <Link
             href="/settings/security"
             className="user-link"

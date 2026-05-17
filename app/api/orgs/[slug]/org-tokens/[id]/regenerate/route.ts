@@ -20,13 +20,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireOrgMember } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { createTokenIndex, deleteTokenIndex } from "@/lib/token-index";
 import {
   generateOrgToken,
   tokenPrefixForUi,
 } from "@/lib/integration-token";
 import { orgTokenAccessLevel } from "@/lib/org-token-rbac";
-import { getCurrentTenantSlug } from "@/lib/tenant-session";
 import { createHash } from "crypto";
 
 type Params = { params: Promise<{ slug: string; id: string }> };
@@ -89,20 +87,6 @@ export async function POST(req: Request, { params }: Params) {
       createdAt: true,
     },
   });
-
-  // Mise à jour de l'index admin : delete l'ancien hash, insert le nouveau.
-  // L'ordre delete-then-create laisse une fenêtre nanoseconde pendant
-  // laquelle aucun token n'est résolvable — acceptable car personne ne
-  // peut connaître le nouveau brut à ce moment (jamais émis).
-  const tenantSlug = await getCurrentTenantSlug();
-  if (tenantSlug) {
-    await deleteTokenIndex(existing.tokenHash).catch((err) => {
-      console.error("[org-token regen] failed to delete old index:", err);
-    });
-    await createTokenIndex(newHash, tenantSlug, "ORG").catch((err) => {
-      console.error("[org-token regen] failed to create new index:", err);
-    });
-  }
 
   logAction({
     action: "ORG_TOKEN_REGENERATE",

@@ -4,8 +4,6 @@ import { auth } from "./auth";
 import { prisma } from "./prisma";
 import type { OrgRole, ProjectRole, Role } from "@prisma/client";
 import { isPlatformAdmin } from "./roles";
-import { enterTenantContext } from "./tenant-context";
-import { isValidClientSlug } from "./validation";
 
 export type AuthedUser = {
   id: string;
@@ -36,20 +34,6 @@ export async function requireUser(): Promise<
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
-  }
-
-  // Phase 5.2 — entrer le contexte tenant si la session en a un. Toutes
-  // les queries `prisma.X.Y(...)` qui suivent dans la même requête
-  // résolvent automatiquement vers `client_<slug>.X` via search_path.
-  //
-  // Si pas de slug (SUPERADMIN sans tenant ou user legacy), on n'entre
-  // PAS de contexte → les queries tenant via le client strict throw.
-  // C'est la garantie « no silent fallback » de la spec : un SUPERADMIN
-  // qui hit accidentellement une route tenant se ramasse une erreur,
-  // jamais une fuite vers public.
-  const tenantSlug = session.user.tenantSlug;
-  if (tenantSlug && isValidClientSlug(tenantSlug)) {
-    enterTenantContext(tenantSlug);
   }
 
   return {

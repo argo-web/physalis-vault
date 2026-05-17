@@ -18,10 +18,7 @@
 
 import { NextResponse } from "next/server";
 import type { ProjectRole, Role, VaultRole } from "@prisma/client";
-// Toutes les queries tenant doivent passer par le PrismaClient du tenant
-// (cf. lib/tenant-prisma.ts). La variable `prisma` ci-dessous est résolue
-// dynamiquement dans le handler après validatePluginToken.
-import { getTenantPrisma } from "@/lib/tenant-prisma";
+import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
 import { encrypt } from "@/lib/crypto";
 import { readJson } from "@/lib/api";
@@ -423,14 +420,6 @@ export async function POST(req: Request) {
       allowOrigin,
     );
   }
-  if (!session.tenantSlug) {
-    return withCors(
-      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      allowOrigin,
-    );
-  }
-  const prisma = getTenantPrisma(session.tenantSlug);
-
   const limited = rateLimit(
     req,
     "plugin-vault-write",
