@@ -1,0 +1,146 @@
+---
+title: Bóvedas
+order: 5
+icon: RiSafe2Line
+summary: Bóveda personal, bóvedas de equipo, TOTP para sitios de terceros.
+---
+
+# Bóvedas
+
+Las **bóvedas** (`Vault`) se utilizan para almacenar credenciales que **no son**
+variables de entorno en tiempo de ejecución — típicamente credenciales de acceso web
+(Bitwarden, AWS Console, panel de Stripe, panel de control de OVH…).
+
+En Physalis existen tres niveles de bóveda:
+
+| Bóveda              | Visibilidad                          | Caso de uso                                          |
+|---------------------|--------------------------------------|------------------------------------------------------|
+| **Personal**        | Solo tú                              | Tu acceso personal, BDs locales, elementos personales |
+| **Equipo (org)**    | Miembros añadidos a la colección     | Acceso compartido entre los responsables técnicos de una org |
+| **Equipo (proyecto)** | Miembros del proyecto (`ProjectMember`) | Acceso vinculado a un proyecto específico         |
+
+Todas las bóvedas utilizan el mismo cifrado AES-256-GCM del lado del servidor
+que los secretos del proyecto.
+
+## Bóveda personal
+
+Accesible mediante **🔒 Bóveda personal** en la navegación del panel, en la URL
+`/vault`. Nadie más que tú puede leer tus entradas — ni siquiera los
+OWNERs de tu organización.
+
+### Crear una entrada
+
+1. Haz clic en **"+ Añadir"** en `/vault`.
+2. Rellena:
+   - **Nombre** — etiqueta corta (p. ej. "AWS prod Console")
+   - **URL** — sitio web asociado (usado por la extensión de navegador para
+     la coincidencia de dominio)
+   - **Usuario** — login / correo electrónico
+   - **Contraseña** — puede generarse con el **🎲 generador** integrado
+     (longitud, símbolos y exclusión de caracteres ambiguos son configurables)
+   - **TOTP** *(opcional)* — clave `otpauth://...` para generar códigos 2FA
+     para el sitio de terceros (ver más abajo)
+   - **Nota** — contexto en formato libre
+
+### Generador de contraseñas
+
+El botón 🎲 abre un generador universal con:
+
+- Longitud (8 → 64 caracteres)
+- Incluir / excluir: mayúsculas, minúsculas, números, símbolos
+- Excluir caracteres ambiguos (`0`/`O`, `1`/`l`/`I`)
+
+La contraseña generada se inserta directamente en el campo — puedes
+regenerarla hasta quedar satisfecho antes de guardar.
+
+## Bóvedas de equipo
+
+### Bóveda de equipo a nivel de organización
+
+En la página de la org → pestaña **🔒 Bóvedas**. Permite crear una **colección**
+(p. ej. "Acceso admin clientes") y añadir entradas compartidas con un subconjunto
+seleccionado de miembros.
+
+#### Crear una colección
+
+> Permisos: ADMIN / OWNER de la org.
+
+1. Haz clic en **"+ Nueva colección"**.
+2. Rellena:
+   - **Nombre** de la colección
+   - **Miembros** iniciales (de la lista de miembros de la org)
+3. Envía. Todos los miembros añadidos pueden ahora ver la colección
+   y crear / leer entradas en ella.
+
+#### Añadir / eliminar un miembro
+
+Dentro de la colección → pestaña **"Miembros"** → añadir mediante desplegable,
+eliminar mediante el botón **"Revocar"**.
+
+> ⚠️ **Revocar no re-cifra** las entradas existentes. El miembro revocado
+> ya no tiene una sesión válida para leer las entradas, pero debes tratar
+> las credenciales como **potencialmente comprometidas** si pudo haberlas
+> exfiltrado durante su acceso. Rota todo lo que sea sensible.
+
+### Bóveda de equipo a nivel de proyecto
+
+Mismo principio, pero con alcance a un proyecto: página del proyecto →
+pestaña **🔒 Bóveda** → colección visible para los `ProjectMember`s.
+
+El **RBAC se hereda** automáticamente: no es necesario gestionar una lista de
+miembros separada — cualquier persona con un rol en el proyecto tiene acceso a la
+bóveda del proyecto (acceso de lectura para VIEWER, acceso de escritura para EDITOR/OWNER).
+
+## TOTP para sitios de terceros
+
+Si almacenas la clave `otpauth://...` de un sitio en una entrada de bóveda,
+Physalis genera automáticamente **códigos TOTP de 6 dígitos** cada 30 segundos
+(RFC 6238).
+
+### Introducir una clave TOTP
+
+Cuando activas el 2FA en un sitio externo, obtienes un código QR
+o una cadena `otpauth://totp/...?secret=XXXX&...`. Pega esa cadena
+en el campo **TOTP** de la entrada:
+
+- Cadena `otpauth://` completa → analizada automáticamente (cuenta, emisor,
+  algoritmo, período)
+- O solo el secreto en base32 (`JBSWY3DPEHPK3PXP`) → período/algoritmo predeterminados
+
+### Leer el código
+
+En la entrada, el código de 6 dígitos se muestra con una **cuenta regresiva** de los
+segundos restantes. Haz clic en él para copiarlo al portapapeles.
+
+La **extensión de navegador** ([→ Extensión de navegador](browser-extension))
+va más lejos: completa automáticamente los campos `autocomplete="one-time-code"` en
+sitios web sin necesidad de copiar y pegar manualmente.
+
+## Mover una entrada personal → equipo
+
+Si has creado una entrada personal que debería compartirse:
+
+1. En la entrada personal → haz clic en **"Mover a un equipo"**.
+2. Elige una colección de equipo (org o proyecto) a la que pertenezcas.
+3. Envía. La entrada queda **re-cifrada y movida de forma atómica** —
+   desaparece de tu bóveda personal y aparece en la colección elegida
+   para todos sus miembros.
+
+## Leer entradas desde la extensión de navegador
+
+La extensión de Physalis (Chrome / Firefox, ver
+[Extensión de navegador](browser-extension)) lee las 3 fuentes de bóveda
+simultáneamente:
+
+- Bóveda personal
+- Bóvedas de equipo (org)
+- Bóvedas de equipo (proyecto)
+
+En el sitio visitado, sugiere credenciales que coincidan con el dominio
+(a través de las URLs almacenadas en las entradas).
+
+## Más información
+
+- [Extensión de navegador](browser-extension) — autocompletado y guardado automático
+  de entradas de bóveda en la web
+- [Comparticiones](comparticiones) — envía una entrada a un tercero sin compartirla permanentemente

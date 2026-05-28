@@ -1,0 +1,146 @@
+---
+title: Vaults
+order: 5
+icon: RiSafe2Line
+summary: Personal vault, team vaults, TOTP for third-party sites.
+---
+
+# Vaults
+
+**Vaults** (`Vault`) are used to store credentials that are **not**
+runtime environment variables — typically web access credentials
+(Bitwarden, AWS Console, Stripe dashboard, OVH control panel…).
+
+Three vault levels exist in Physalis:
+
+| Vault               | Visibility                           | Use case                                     |
+|---------------------|--------------------------------------|----------------------------------------------|
+| **Personal**        | You only                             | Your personal access, local DBs, personal items |
+| **Team (org)**      | Members added to the collection      | Shared access among tech leads of an org     |
+| **Team (project)**  | Project members (`ProjectMember`)    | Access tied to a specific project            |
+
+All vaults use the same AES-256-GCM server-side encryption as project
+secrets.
+
+## Personal vault
+
+Accessible via **🔒 Personal vault** in the dashboard nav, at the URL
+`/vault`. No one other than you can read your entries — not even the
+OWNERs of your organisation.
+
+### Create an entry
+
+1. Click **"+ Add"** on `/vault`.
+2. Fill in:
+   - **Name** — short label (e.g. "AWS prod Console")
+   - **URL** — associated website (used by the browser extension for
+     domain matching)
+   - **Username** — login / email
+   - **Password** — can be generated with the built-in **🎲 generator**
+     (length, symbols, ambiguous character exclusion are configurable)
+   - **TOTP** *(optional)* — `otpauth://...` key to generate 2FA codes
+     for the third-party site (see below)
+   - **Note** — free-form context
+
+### Password generator
+
+The 🎲 button opens a universal generator with:
+
+- Length (8 → 64 characters)
+- Include / exclude: uppercase, lowercase, numbers, symbols
+- Exclude ambiguous characters (`0`/`O`, `1`/`l`/`I`)
+
+The generated password is inserted directly into the field — you can
+regenerate it until satisfied before saving.
+
+## Team vaults
+
+### Team vault at the organisation level
+
+On the org page → **🔒 Vaults** tab. Lets you create a **collection**
+(e.g. "Client admin access") and add entries shared with a selected
+subset of members.
+
+#### Create a collection
+
+> Permissions: ADMIN / OWNER of the org.
+
+1. Click **"+ New collection"**.
+2. Fill in:
+   - Collection **Name**
+   - Initial **Members** (from the org's member list)
+3. Submit. All added members can now see the collection
+   and create / read entries in it.
+
+#### Add / remove a member
+
+Inside the collection → **"Members"** tab → add via dropdown,
+remove via the **"Revoke"** button.
+
+> ⚠️ **Revoking does not re-encrypt** existing entries. The revoked member
+> no longer has a valid session to read the entries, but you should treat
+> the credentials as **potentially compromised** if they could have
+> exfiltrated them during their access. Rotate anything sensitive.
+
+### Team vault at the project level
+
+Same principle, but scoped to a project: project page →
+**🔒 Vault** tab → collection visible to `ProjectMember`s.
+
+**RBAC is inherited** automatically: no need to manage a separate member
+list — anyone with a role on the project has access to the project vault
+(read access for VIEWER, write access for EDITOR/OWNER).
+
+## TOTP for third-party sites
+
+If you store the `otpauth://...` key of a site in a vault entry,
+Physalis automatically generates **6-digit TOTP codes** every 30 seconds
+(RFC 6238).
+
+### Enter a TOTP key
+
+When you enable 2FA on an external site, you get a QR code
+or an `otpauth://totp/...?secret=XXXX&...` string. Paste that string
+into the **TOTP** field of the entry:
+
+- Full `otpauth://` string → parsed automatically (account, issuer,
+  algorithm, period)
+- Or just the base32 secret (`JBSWY3DPEHPK3PXP`) → default period/algorithm
+
+### Read the code
+
+On the entry, the 6-digit code is displayed with a **countdown** of the
+remaining seconds. Click it to copy to the clipboard.
+
+The **browser extension** ([→ Browser extension](browser-extension))
+goes further: it auto-fills `autocomplete="one-time-code"` fields on
+websites without any manual copy-pasting.
+
+## Move a personal entry → team
+
+If you have created a personal entry that should be shared:
+
+1. On the personal entry → click **"Move to a team"**.
+2. Choose a team collection (org or project) that you belong to.
+3. Submit. The entry is **atomically re-encrypted and moved** —
+   it disappears from your personal vault and appears in the chosen
+   collection for all its members.
+
+## Reading entries from the browser extension
+
+The Physalis extension (Chrome / Firefox, see
+[Browser extension](browser-extension)) reads all 3 vault sources
+simultaneously:
+
+- Personal vault
+- Team vaults (org)
+- Team vaults (project)
+
+On the visited site, it suggests credentials matching the domain
+(via the URLs stored in the entries).
+
+## Go further
+
+- [Browser extension](browser-extension) — auto-fill and auto-save
+  vault entries on the web
+- [Shares](shares) — send an entry to a third party without sharing it permanently
