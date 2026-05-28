@@ -65,9 +65,9 @@ export default function SignupForm() {
           Votre organisation <strong>{state.slug}</strong> a été créée.<br />
           Connectez-vous avec <strong>{state.adminEmail}</strong>.
         </p>
-        <a href="/login" className="btn btn-primary" style={{ padding: "11px 16px", justifyContent: "center" }}>
+        <Link href="/login" className="btn btn-primary" style={{ padding: "11px 16px", justifyContent: "center" }}>
           Se connecter →
-        </a>
+        </Link>
       </div>
     );
   }

@@ -15,12 +15,15 @@ import HeaderNav from "./header-nav";
 
 export default async function DashboardLayout({
   children,
+  params,
 }: {
   children: ReactNode;
+  params: Promise<{ locale: string }>;
 }) {
+  const { locale } = await params;
   const session = await auth();
   if (!session?.user?.id) {
-    redirect("/login");
+    redirect(`/${locale}/login`);
   }
   const userId = session.user.id;
   const email = session.user.email ?? "";
@@ -39,7 +42,7 @@ export default async function DashboardLayout({
     <div className="min-h-screen flex flex-col bg-bg">
       <header className="app-header">
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="brand">
+          <Link href={`/${locale}/dashboard`} className="brand">
             <Image
               src="/icon-32.png"
               alt=""
@@ -61,12 +64,12 @@ export default async function DashboardLayout({
         </div>
         <div className="flex items-center gap-3">
           {isSuperadmin(session.user.role) && (
-            <Link href="/admin" className="btn btn-ghost btn-sm">
+            <Link href={`/${locale}/admin`} className="btn btn-ghost btn-sm">
               Admin
             </Link>
           )}
           <Link
-            href="/settings/security"
+            href={`/${locale}/settings/security`}
             className="user-link"
             title="Paramètres de sécurité (2FA, sessions plugin)"
           >
@@ -75,7 +78,7 @@ export default async function DashboardLayout({
           <form
             action={async () => {
               "use server";
-              await signOut({ redirectTo: "/login" });
+              await signOut({ redirectTo: `/${locale}/login` });
             }}
           >
             <button type="submit" className="btn btn-ghost btn-sm">

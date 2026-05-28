@@ -13,6 +13,7 @@
 //      cle du fragment → affiche.
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { RiShareForward2Line } from "@remixicon/react";
 import {
   encryptShareContent,
@@ -214,9 +215,9 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
                 chiffrement est dans le fragment <code>#</code> de l&apos;URL,
                 jamais envoyée au serveur. Le contenu n&apos;est jamais lisible
                 en base.{" "}
-                <a href="/shares" className="text-accent">
+                <Link href="/shares" className="text-accent">
                   Voir mes partages
-                </a>
+                </Link>
               </p>
             </div>
             <div className="dialog-footer">

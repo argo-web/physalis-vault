@@ -4,30 +4,37 @@ import { redirect } from "next/navigation";
 import { auth, signOut } from "@/lib/auth";
 import { isSuperadmin } from "@/lib/roles";
 
-export default async function AdminLayout({ children }: { children: ReactNode }) {
+export default async function AdminLayout({
+  children,
+  params,
+}: {
+  children: ReactNode;
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
   const session = await auth();
   if (!session?.user || !isSuperadmin(session.user.role)) {
-    redirect("/dashboard");
+    redirect(`/${locale}/dashboard`);
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-bg">
       <header className="app-header">
         <div className="flex items-center gap-6">
-          <Link href="/admin" className="brand">
+          <Link href={`/${locale}/admin`} className="brand">
             Physalis <span style={{ fontSize: 11, opacity: 0.6, fontWeight: 400 }}>admin</span>
           </Link>
           <nav className="flex items-center gap-1">
-            <Link href="/admin/users" className="btn btn-ghost btn-sm">Utilisateurs</Link>
-            <Link href="/admin/orgs" className="btn btn-ghost btn-sm">Organisations</Link>
+            <Link href={`/${locale}/admin/users`} className="btn btn-ghost btn-sm">Utilisateurs</Link>
+            <Link href={`/${locale}/admin/orgs`} className="btn btn-ghost btn-sm">Organisations</Link>
           </nav>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="btn btn-ghost btn-sm">← Dashboard</Link>
+          <Link href={`/${locale}/dashboard`} className="btn btn-ghost btn-sm">← Dashboard</Link>
           <form
             action={async () => {
               "use server";
-              await signOut({ redirectTo: "/login" });
+              await signOut({ redirectTo: `/${locale}/login` });
             }}
           >
             <button type="submit" className="btn btn-ghost btn-sm">Déconnexion</button>

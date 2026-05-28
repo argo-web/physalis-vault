@@ -10,6 +10,7 @@
 //   - Token brut affiché UNE SEULE FOIS après création
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { RiKey2Line } from "@remixicon/react";
 
 const SCOPE_LABELS: Record<string, { label: string; description: string }> = {
@@ -711,7 +712,7 @@ function JustCreatedBanner({
         </button>
         {savedToVault === "saved" && (
           <span className="help" style={{ fontSize: 11 }}>
-            Visible dans <a href="/vault" className="text-accent">ton coffre</a>{" "}
+            Visible dans <Link href="/vault" className="text-accent">ton coffre</Link>{" "}
             sous « OrgToken: {name} ».
           </span>
         )}

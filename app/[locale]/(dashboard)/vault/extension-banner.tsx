@@ -11,6 +11,7 @@
 // (dataset DOM + event `secretvault-extension-ready` + polling fallback).
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 const DISMISS_KEY = "physalis-vault-extension-banner-dismissed";
 const POLL_INTERVAL_MS = 500;
@@ -91,9 +92,9 @@ export default function ExtensionBanner({ totalCount }: { totalCount: number }) 
       <span style={{ flex: 1 }}>
         Installe l&apos;extension Physalis pour auto-remplir tes credentials
         directement depuis le navigateur.{" "}
-        <a href="/dashboard" className="text-accent">
+        <Link href="/dashboard" className="text-accent">
           Voir les instructions
-        </a>
+        </Link>
         .
       </span>
       <button

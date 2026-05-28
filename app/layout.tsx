@@ -1,34 +1,6 @@
-import type { Metadata, Viewport } from "next";
-import { headers } from "next/headers";
-import "./globals.css";
+import type { ReactNode } from "react";
 
-export const metadata: Metadata = {
-  title: "Physalis",
-  description: "Self-hosted secrets manager",
-};
-
-// Sans cet export, mobile zoome-out a 980px par defaut et l'app n'est
-// pas du tout responsive. Next 15 separe viewport de metadata.
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-};
-
-export default async function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  // Lecture du header x-nonce pose par le middleware. Cet appel a un effet
-  // de bord critique : il bascule TOUTES les pages en rendu dynamique au
-  // lieu de prerender statique. Sans ca, les pages comme /login seraient
-  // servies depuis le build cache (sans nonce dans les <script> inline) +
-  // CSP fraiche (avec nonce different) → mismatch + browser block.
-  // Cf. https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
-  await headers();
-  return (
-    <html lang="fr" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
-    </html>
-  );
+// Root layout minimal : le layout [locale] fournit <html> et <body>.
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return children;
 }

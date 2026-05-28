@@ -1,10 +1,13 @@
-// Middleware Next.js — fait deux choses pour chaque requete HTML :
-//   1. Genere un nonce et pose un Content-Security-Policy strict (script-src
+// Middleware Next.js — fait trois choses pour chaque requete HTML :
+//   1. Routage de locale : si le path n'a pas de prefixe de langue,
+//      détecte la locale (cookie → Accept-Language → défaut "en") et
+//      redirige vers /{locale}/path.
+//   2. Genere un nonce et pose un Content-Security-Policy strict (script-src
 //      avec nonce + strict-dynamic). Next.js v13+ lit le header `x-nonce`
 //      (et `Content-Security-Policy`) sur la requete et l'applique
 //      automatiquement aux <script> qu'il inline pour l'hydration.
-//   2. Pour les routes protegees, valide la session JWT et redirige vers
-//      /login si manquante (logique existante, conservee).
+//   3. Pour les routes protegees, valide la session JWT et redirige vers
+//      /{locale}/login si manquante.
 //
 // CSP rationale :
 //   - script-src 'self' 'nonce-<x>' 'strict-dynamic' : interdit tout script
@@ -23,9 +26,14 @@
 
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { authConfig } from "@/lib/auth.config";
 
 const { auth } = NextAuth(authConfig);
+
+const LOCALES = ["en", "es", "fr"] as const;
+type Locale = (typeof LOCALES)[number];
+const DEFAULT_LOCALE: Locale = "en";
 
 const PROTECTED_PREFIXES = [
   "/dashboard",
@@ -36,6 +44,28 @@ const PROTECTED_PREFIXES = [
   "/vault",
   "/admin",
 ];
+
+function getLocaleFromPath(path: string): Locale | null {
+  const match = path.match(/^\/([a-z]{2})(\/|$)/);
+  if (match && LOCALES.includes(match[1] as Locale)) return match[1] as Locale;
+  return null;
+}
+
+function detectLocale(req: NextRequest): Locale {
+  const cookie = req.cookies.get("NEXT_LOCALE")?.value;
+  if (cookie && LOCALES.includes(cookie as Locale)) return cookie as Locale;
+
+  const acceptLang = req.headers.get("accept-language") ?? "";
+  for (const part of acceptLang.split(",")) {
+    const lang = part.trim().split(";")[0].substring(0, 2);
+    if (LOCALES.includes(lang as Locale)) return lang as Locale;
+  }
+  return DEFAULT_LOCALE;
+}
+
+function stripLocale(path: string): string {
+  return path.replace(/^\/[a-z]{2}(\/|$)/, "/");
+}
 
 function isProtectedPath(path: string): boolean {
   return PROTECTED_PREFIXES.some(
@@ -78,16 +108,28 @@ export default auth((req) => {
   ).join("");
   const csp = buildCsp(nonce);
 
-  // 1. Auth check : redirige vers /login si route protegee + pas authentifie.
-  if (isProtectedPath(path) && !req.auth) {
-    const url = new URL("/login", req.url);
+  // 1. Routage de locale : redirige /{path} → /{locale}/{path}
+  const pathLocale = getLocaleFromPath(path);
+  if (!pathLocale) {
+    const locale = detectLocale(req);
+    const target = new URL(`/${locale}${path === "/" ? "" : path}`, req.url);
+    target.search = req.nextUrl.search;
+    const response = NextResponse.redirect(target);
+    response.headers.set("Content-Security-Policy", csp);
+    return response;
+  }
+
+  // 2. Auth check : redirige vers /{locale}/login si route protégée + pas authentifié.
+  const pathWithoutLocale = stripLocale(path);
+  if (isProtectedPath(pathWithoutLocale) && !req.auth) {
+    const url = new URL(`/${pathLocale}/login`, req.url);
     url.searchParams.set("callbackUrl", path);
     const response = NextResponse.redirect(url);
     response.headers.set("Content-Security-Policy", csp);
     return response;
   }
 
-  // 2. Pose le nonce + CSP dans les headers de la requete pour que Next les
+  // 3. Pose le nonce + CSP dans les headers de la requete pour que Next les
   //    lise pour l'hydration. Pose aussi la CSP sur la response pour que le
   //    navigateur l'applique. Les deux doivent etre coherents.
   const requestHeaders = new Headers(req.headers);

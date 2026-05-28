@@ -1,4 +1,7 @@
 import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
+
+const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -39,8 +42,8 @@ const nextConfig: NextConfig = {
   // requête (sidebar) — sans cette directive, Next ne trace pas ces fichiers
   // (path en dehors de l'arbre `app/`) et le runtime échoue avec ENOENT.
   outputFileTracingIncludes: {
-    "/docs": ["./docs/documentation/**/*"],
-    "/docs/[slug]": ["./docs/documentation/**/*"],
+    "/[locale]/docs": ["./docs/documentation/**/*"],
+    "/[locale]/docs/[slug]": ["./docs/documentation/**/*"],
   },
   async headers() {
     return [
@@ -52,4 +55,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withNextIntl(nextConfig);
