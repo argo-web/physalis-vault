@@ -97,5 +97,14 @@
       "fr": { "file": "11-api-gateway.md",              "slug": "api-gateway" },
       "es": { "file": "11-api-gateway.md",              "slug": "api-gateway" }
     }
+  },
+  {
+    "order": 12,
+    "icon": "RiMailSendLine",
+    "translations": {
+      "en": { "file": "12-email.md",                    "slug": "email" },
+      "fr": { "file": "12-email.md",                    "slug": "email" },
+      "es": { "file": "12-email.md",                    "slug": "email" }
+    }
   }
 ]
