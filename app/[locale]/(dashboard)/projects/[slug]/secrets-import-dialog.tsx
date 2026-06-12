@@ -6,6 +6,7 @@
 // la preview — uniquement les cles.
 
 import { useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import {
   SECRET_CATEGORIES,
   SECRET_CATEGORY_LABELS,
@@ -68,6 +69,7 @@ export default function SecretsImportDialog({
   onClose: () => void;
   onImported: () => void;
 }) {
+  const t = useTranslations("projects.secrets.import");
   const [envText, setEnvText] = useState("");
   const [conflictPolicy, setConflictPolicy] =
     useState<ConflictPolicy>("skip");
@@ -163,7 +165,7 @@ export default function SecretsImportDialog({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="dialog-header">
-            <h2 className="dialog-title">Import terminé</h2>
+            <h2 className="dialog-title">{t("complete")}</h2>
             <button
               type="button"
               onClick={onClose}
@@ -182,7 +184,7 @@ export default function SecretsImportDialog({
               onClick={onClose}
               className="btn btn-primary btn-sm"
             >
-              Fermer
+              {t("complete")}
             </button>
           </div>
         </div>
@@ -196,7 +198,7 @@ export default function SecretsImportDialog({
       <div className="dialog dialog-lg" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">
-            Importer un .env — <span className="code-mono">{env}</span>
+            {t("title", { env })}
           </h2>
           <button
             type="button"
@@ -209,7 +211,7 @@ export default function SecretsImportDialog({
         </div>
         <div className="dialog-body">
           <div className="field">
-            <label htmlFor="envText">Contenu .env</label>
+            <label htmlFor="envText">{t("contentLabel")}</label>
             <textarea
               id="envText"
               value={envText}
@@ -234,7 +236,7 @@ export default function SecretsImportDialog({
                   textDecoration: "underline",
                 }}
               >
-                Charger un fichier
+                {t("fileBtn")}
                 <input
                   type="file"
                   accept=".env,text/plain"
@@ -247,7 +249,7 @@ export default function SecretsImportDialog({
 
           <div className="form-row">
             <div className="field">
-              <label htmlFor="conflictPolicy">En cas de doublon</label>
+              <label htmlFor="conflictPolicy">{t("conflictLabel")}</label>
               <select
                 id="conflictPolicy"
                 value={conflictPolicy}
@@ -258,15 +260,15 @@ export default function SecretsImportDialog({
                 className="select"
               >
                 <option value="skip">
-                  Ignorer (ne pas écraser les valeurs existantes)
+                  {t("skip")}
                 </option>
                 <option value="overwrite">
-                  Écraser (avec snapshot dans l&apos;historique)
+                  {t("overwrite")}
                 </option>
               </select>
             </div>
             <div className="field">
-              <label htmlFor="defaultCategory">Catégorie (optionnel)</label>
+              <label htmlFor="defaultCategory">{t("categoryLabel")}</label>
               <select
                 id="defaultCategory"
                 value={defaultCategory}
@@ -305,7 +307,7 @@ export default function SecretsImportDialog({
               disabled={pending || !envText.trim()}
               className="btn btn-primary btn-sm"
             >
-              {pending ? "Analyse…" : "Analyser"}
+              {pending ? t("analyzeLoading") : t("analyzeBtn")}
             </button>
           ) : (
             <>
@@ -327,14 +329,8 @@ export default function SecretsImportDialog({
                 className="btn btn-primary btn-sm"
               >
                 {pending
-                  ? "Import…"
-                  : `Importer ${
-                      preview.summary.toCreate + preview.summary.toUpdate
-                    } secret${
-                      preview.summary.toCreate + preview.summary.toUpdate === 1
-                        ? ""
-                        : "s"
-                    }`}
+                  ? t("importLoading")
+                  : t("executeBtn", { count: preview.summary.toCreate + preview.summary.toUpdate })}
               </button>
             </>
           )}
@@ -345,6 +341,7 @@ export default function SecretsImportDialog({
 }
 
 function PreviewSummary({ preview }: { preview: DryRunResponse }) {
+  const t = useTranslations("projects.secrets.import");
   const { summary, keys, parseErrors } = preview;
   return (
     <div
@@ -358,44 +355,40 @@ function PreviewSummary({ preview }: { preview: DryRunResponse }) {
         gap: 8,
       }}
     >
-      <div style={{ fontWeight: 600, fontSize: 13 }}>Analyse du contenu</div>
+      <div style={{ fontWeight: 600, fontSize: 13 }}>{t("previewTitle")}</div>
       <div className="row-meta">
-        <span>
-          <strong>{summary.parsed}</strong> entrée
-          {summary.parsed === 1 ? "" : "s"} lue{summary.parsed === 1 ? "" : "s"}
-        </span>
+        <span>{t("entries", { count: summary.parsed })}</span>
         <span style={{ color: "var(--success)" }}>
-          ✓ {summary.toCreate} nouvelle{summary.toCreate === 1 ? "" : "s"}
+          ✓ {t("newCount", { count: summary.toCreate })}
         </span>
         {summary.toUpdate > 0 && (
           <span style={{ color: "var(--accent)" }}>
-            ↻ {summary.toUpdate} à écraser
+            ↻ {t("updateCount", { count: summary.toUpdate })}
           </span>
         )}
         {summary.toSkip > 0 && (
           <span style={{ color: "var(--muted)" }}>
-            ⊘ {summary.toSkip} ignorée{summary.toSkip === 1 ? "" : "s"}
+            ⊘ {t("skipCount", { count: summary.toSkip })}
           </span>
         )}
         {summary.invalid > 0 && (
           <span style={{ color: "var(--danger)" }}>
-            ⚠ {summary.invalid} nom{summary.invalid === 1 ? "" : "s"} invalide
-            {summary.invalid === 1 ? "" : "s"}
+            ⚠ {t("invalidCount", { count: summary.invalid })}
           </span>
         )}
       </div>
 
-      <KeyList label="Nouvelles" keys={keys.toCreate} />
+      <KeyList label={t("keyListNew")} keys={keys.toCreate} />
       <KeyList
-        label="Seront écrasées"
+        label={t("keyListToUpdate")}
         keys={keys.toUpdate}
         color="var(--accent)"
       />
-      <KeyList label="Ignorées (déjà existantes)" keys={keys.toSkip} />
+      <KeyList label={t("keyListToSkip")} keys={keys.toSkip} />
       {keys.invalid.length > 0 && (
         <div>
           <div className="help" style={{ fontWeight: 600, marginBottom: 4 }}>
-            Noms invalides
+            {t("keyListInvalidNames")}
           </div>
           <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
             {keys.invalid.map((it, idx) => (
@@ -409,7 +402,7 @@ function PreviewSummary({ preview }: { preview: DryRunResponse }) {
       {parseErrors.length > 0 && (
         <div>
           <div className="help" style={{ fontWeight: 600, marginBottom: 4 }}>
-            Avertissements parser
+            {t("keyListParserWarnings")}
           </div>
           <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
             {parseErrors.slice(0, 10).map((e, idx) => (
@@ -428,40 +421,41 @@ function PreviewSummary({ preview }: { preview: DryRunResponse }) {
 }
 
 function ResultSummary({ result }: { result: ExecuteResponse }) {
+  const t = useTranslations("projects.secrets.import");
   const { summary, keys } = result;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="row-meta">
         <span style={{ color: "var(--success)" }}>
-          ✓ {summary.created} créé{summary.created === 1 ? "" : "s"}
+          {t("resultCreated", { count: summary.created })}
         </span>
         {summary.updated > 0 && (
           <span style={{ color: "var(--accent)" }}>
-            ↻ {summary.updated} écrasé{summary.updated === 1 ? "" : "s"}
+            {t("resultUpdated", { count: summary.updated })}
           </span>
         )}
         {summary.skipped > 0 && (
           <span style={{ color: "var(--muted)" }}>
-            ⊘ {summary.skipped} ignoré{summary.skipped === 1 ? "" : "s"}
+            {t("resultSkipped", { count: summary.skipped })}
           </span>
         )}
         {summary.invalid > 0 && (
           <span style={{ color: "var(--danger)" }}>
-            ⚠ {summary.invalid} invalide{summary.invalid === 1 ? "" : "s"}
+            {t("resultInvalid", { count: summary.invalid })}
           </span>
         )}
         {summary.failed > 0 && (
           <span style={{ color: "var(--danger)" }}>
-            ✗ {summary.failed} échec{summary.failed === 1 ? "" : "s"}
+            {t("resultFailed", { count: summary.failed })}
           </span>
         )}
       </div>
-      <KeyList label="Créées" keys={keys.created} />
-      <KeyList label="Écrasées" keys={keys.updated} color="var(--accent)" />
+      <KeyList label={t("keyListCreated")} keys={keys.created} />
+      <KeyList label={t("keyListUpdated")} keys={keys.updated} color="var(--accent)" />
       {keys.failed.length > 0 && (
         <div>
           <div className="help" style={{ fontWeight: 600, marginBottom: 4 }}>
-            Échecs
+            {t("keyListFailed")}
           </div>
           <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
             {keys.failed.map((it, idx) => (

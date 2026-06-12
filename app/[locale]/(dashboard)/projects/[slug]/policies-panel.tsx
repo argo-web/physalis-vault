@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { ProjectRole } from "@prisma/client";
 import { RiSettings3Line } from "@remixicon/react";
 
@@ -37,6 +38,7 @@ export default function PoliciesPanel({
   environments: EnvSummary[];
   defaultGithubRepo: string | null;
 }) {
+  const t = useTranslations("projects.policies");
   const [policies, setPolicies] = useState<PolicyListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -65,7 +67,7 @@ export default function PoliciesPanel({
   async function remove(p: PolicyListItem) {
     if (
       !confirm(
-        `Supprimer la policy ${p.repo} · ${p.workflow} · ${p.branch} → ${p.environment} ?`,
+        t("deleteConfirm", { repo: p.repo, workflow: p.workflow, branch: p.branch, environment: p.environment }),
       )
     )
       return;
@@ -73,7 +75,7 @@ export default function PoliciesPanel({
       method: "DELETE",
     });
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteError"));
       return;
     }
     reload();
@@ -83,23 +85,23 @@ export default function PoliciesPanel({
     <div className="flex flex-col gap-4">
       <div className="section-header">
         <div>
-          <h2 className="section-title">Politiques OIDC</h2>
+          <h2 className="section-title">{t("title")}</h2>
           <p className="help" style={{ marginTop: 4 }}>
-            Liaison stricte (repo · workflow · branche) → environnement. Aucune
-            wildcard. Le workflow GitHub doit présenter un token OIDC dont les
-            claims correspondent <strong>exactement</strong> à une policy pour
-            que <code className="code-mono">/api/deploy</code> retourne le
-            bundle.
+            {t("desc")}
           </p>
         </div>
         {effectiveCanManage && !adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="btn btn-primary btn-sm"
-          >
-            + Ajouter
-          </button>
+          defaultGithubRepo ? (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="btn btn-primary btn-sm"
+            >
+              {t("addBtn")}
+            </button>
+          ) : (
+            <span className="help">{t("repoRequired")}</span>
+          )
         )}
       </div>
 
@@ -108,7 +110,6 @@ export default function PoliciesPanel({
           <PolicyForm
             slug={slug}
             environments={environments}
-            defaultGithubRepo={defaultGithubRepo}
             onCancel={() => setAdding(false)}
             onSaved={() => {
               setAdding(false);
@@ -124,10 +125,9 @@ export default function PoliciesPanel({
         <p className="help">Chargement…</p>
       ) : policies.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-title">Aucune policy</div>
+          <div className="empty-state-title">{t("empty")}</div>
           <div>
-            Sans policy, aucun workflow GitHub ne peut récupérer de secrets via
-            OIDC.
+            {t("emptyHint")}
           </div>
         </div>
       ) : (
@@ -138,7 +138,6 @@ export default function PoliciesPanel({
                 <PolicyForm
                   slug={slug}
                   environments={environments}
-                  defaultGithubRepo={defaultGithubRepo}
                   initial={p}
                   onCancel={() => setEditingId(null)}
                   onSaved={() => {
@@ -152,14 +151,12 @@ export default function PoliciesPanel({
                 <div className="row-icon"><RiSettings3Line size={18} aria-hidden /></div>
                 <div className="row-info">
                   <div className="row-name code-mono">
-                    {p.repo} → <span className="text-accent">{p.environment}</span>
+                    {p.workflow} <span className="text-muted">@</span> {p.branch}{" "}
+                    → <span className="text-accent">{p.environment}</span>
                   </div>
                   <div className="row-meta code-mono">
                     <span>
-                      <span className="text-muted">workflow</span> {p.workflow}
-                    </span>
-                    <span>
-                      · <span className="text-muted">branche</span> {p.branch}
+                      <span className="text-muted">repo</span> {p.repo}
                     </span>
                   </div>
                 </div>
@@ -195,21 +192,19 @@ export default function PoliciesPanel({
 function PolicyForm({
   slug,
   environments,
-  defaultGithubRepo,
   initial,
   onCancel,
   onSaved,
 }: {
   slug: string;
   environments: EnvSummary[];
-  defaultGithubRepo: string | null;
   /** Mode édition : on PATCH /policies/[id] avec uniquement les champs
    *  changés. Si non fourni, mode création (POST). */
   initial?: PolicyListItem;
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const [repo, setRepo] = useState(initial?.repo ?? defaultGithubRepo ?? "");
+  const t = useTranslations("projects.policies");
   const [workflow, setWorkflow] = useState(initial?.workflow ?? "deploy.yml");
   const [branch, setBranch] = useState(initial?.branch ?? "main");
   const [environment, setEnvironment] = useState(
@@ -229,7 +224,7 @@ function PolicyForm({
       const res = await fetch(url, {
         method: isEdit ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo, workflow, branch, environment }),
+        body: JSON.stringify({ workflow, branch, environment }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as
@@ -237,7 +232,7 @@ function PolicyForm({
           | null;
         setError(
           data?.error ??
-            (isEdit ? "Modification impossible." : "Création impossible."),
+            (isEdit ? t("updateError") : t("createError")),
         );
         return;
       }
@@ -250,19 +245,7 @@ function PolicyForm({
       <div className="form-row">
         <div className="field">
           <label>
-            Repo (<code className="code-mono">owner/repo</code>)
-          </label>
-          <input
-            required
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            placeholder="argo-web/voyages"
-            className="input input-mono"
-          />
-        </div>
-        <div className="field">
-          <label>
-            Workflow (fichier <code className="code-mono">.yml</code>)
+            {t("form.workflowLabel")}
           </label>
           <input
             required
@@ -272,10 +255,8 @@ function PolicyForm({
             className="input input-mono"
           />
         </div>
-      </div>
-      <div className="form-row" style={{ marginTop: 8 }}>
         <div className="field">
-          <label>Branche (match exact)</label>
+          <label>{t("form.branchLabel")}</label>
           <input
             required
             value={branch}
@@ -285,7 +266,7 @@ function PolicyForm({
           />
         </div>
         <div className="field">
-          <label>Environnement cible</label>
+          <label>{t("form.envLabel")}</label>
           <select
             value={environment}
             onChange={(e) => setEnvironment(e.target.value)}
@@ -311,13 +292,7 @@ function PolicyForm({
           disabled={pending}
           className="btn btn-primary btn-sm"
         >
-          {pending
-            ? isEdit
-              ? "Mise à jour…"
-              : "Création…"
-            : isEdit
-              ? "Mettre à jour"
-              : "Créer"}
+          {isEdit ? t("form.updateBtn") : t("form.submitBtn")}
         </button>
         <button
           type="button"

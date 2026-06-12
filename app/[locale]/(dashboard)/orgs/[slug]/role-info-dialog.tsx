@@ -1,74 +1,87 @@
 "use client";
 
 import { useEffect } from "react";
+import { useTranslations } from "next-intl";
 
 type RoleRow = {
-  role: "MEMBER" | "DEV" | "ADMIN" | "OWNER";
+  role: "MEMBER" | "DEV" | "ADMIN_DEV" | "ADMIN" | "OWNER";
   title: string;
   badge: string;
   summary: string;
   rights: { label: string; granted: boolean | "read" }[];
 };
 
+// Rights label keys per role — mirrors orgs.roleInfo.* in en.json
 const RIGHTS_ROWS: RoleRow[] = [
   {
     role: "MEMBER",
     title: "Member",
     badge: "role-member",
-    summary:
-      "Accès basique. Ne voit AUCUN projet par défaut — l'admin doit l'ajouter explicitement comme ProjectMember (avec un rôle VIEWER/EDITOR/OWNER) sur chaque projet auquel il doit accéder.",
+    summary: "",
     rights: [
-      { label: "Voir l'organisation", granted: true },
-      { label: "Voir les projets (uniquement ceux où ProjectMember explicite)", granted: "read" },
-      { label: "Reveal OrgSecret (variables globales)", granted: false },
-      { label: "Voir les serveurs de l'org", granted: false },
-      { label: "Inviter / retirer membres", granted: false },
-      { label: "Voir l'audit log", granted: false },
-      { label: "Modifier l'org / supprimer l'org", granted: false },
+      { label: "viewOrg", granted: true },
+      { label: "viewProjects", granted: "read" },
+      { label: "revealOrgSecret", granted: false },
+      { label: "viewServers", granted: false },
+      { label: "manageMembers", granted: false },
+      { label: "viewAudit", granted: false },
+      { label: "manageOrg", granted: false },
     ],
   },
   {
     role: "DEV",
     title: "Dev",
     badge: "role-dev",
-    summary:
-      "Profil développeur. EDITOR implicite sur tous les projets de l'org (CRUD secrets project-level, redeploy). Lecture des secrets globaux et des serveurs. Peut consulter ses propres actions dans l'audit log.",
+    summary: "",
     rights: [
-      { label: "EDITOR implicite sur tous les projets de l'org", granted: true },
-      { label: "Reveal OrgSecret (variables globales)", granted: "read" },
-      { label: "Créer/modifier/supprimer OrgSecret", granted: false },
-      { label: "Voir les serveurs (IP, user SSH)", granted: "read" },
-      { label: "Créer/modifier/supprimer un serveur", granted: false },
-      { label: "Inviter / retirer membres", granted: false },
-      { label: "Audit log : ses propres actions sur projets accessibles", granted: "read" },
+      { label: "implicitEditor", granted: true },
+      { label: "revealOrgSecret", granted: "read" },
+      { label: "manageOrgSecret", granted: false },
+      { label: "viewServers", granted: "read" },
+      { label: "manageServers", granted: false },
+      { label: "manageMembers", granted: false },
+      { label: "ownAudit", granted: "read" },
+    ],
+  },
+  {
+    role: "ADMIN_DEV",
+    title: "AdminDev",
+    badge: "role-admin_dev",
+    summary: "",
+    rights: [
+      { label: "implicitEditor", granted: true },
+      { label: "revealOrgSecret", granted: "read" },
+      { label: "manageOrgSecret", granted: true },
+      { label: "viewServers", granted: "read" },
+      { label: "manageServers", granted: true },
+      { label: "manageMembers", granted: false },
+      { label: "ownAudit", granted: "read" },
     ],
   },
   {
     role: "ADMIN",
     title: "Admin",
     badge: "role-admin",
-    summary:
-      "Gère l'organisation au quotidien. OWNER implicite sur tous les projets, peut ajouter/retirer des membres (sauf grant OWNER).",
+    summary: "",
     rights: [
-      { label: "OWNER implicite sur tous les projets de l'org", granted: true },
-      { label: "CRUD OrgSecret + Server", granted: true },
-      { label: "Inviter, retirer, changer le rôle des membres", granted: true },
-      { label: "Promouvoir un membre OWNER", granted: false },
-      { label: "Modifier le nom de l'org", granted: true },
-      { label: "Supprimer l'org", granted: false },
-      { label: "Voir l'audit log", granted: true },
+      { label: "implicitOwner", granted: true },
+      { label: "crudOrgSecretServer", granted: true },
+      { label: "manageMembers", granted: true },
+      { label: "promoteOwner", granted: false },
+      { label: "renameOrg", granted: true },
+      { label: "deleteOrg", granted: false },
+      { label: "viewAudit", granted: true },
     ],
   },
   {
     role: "OWNER",
     title: "Owner",
     badge: "role-owner",
-    summary:
-      "Pleins pouvoirs sur l'organisation, y compris les actions destructives.",
+    summary: "",
     rights: [
-      { label: "Tout ce qu'un Admin peut faire", granted: true },
-      { label: "Promouvoir un membre OWNER", granted: true },
-      { label: "Supprimer l'organisation", granted: true },
+      { label: "allAdmin", granted: true },
+      { label: "promoteOwner", granted: true },
+      { label: "deleteOrg", granted: true },
     ],
   },
 ];
@@ -80,6 +93,7 @@ function rightIcon(g: boolean | "read"): string {
 }
 
 export default function RoleInfoDialog({ onClose }: { onClose: () => void }) {
+  const t = useTranslations("orgs.roleInfo");
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -96,12 +110,12 @@ export default function RoleInfoDialog({ onClose }: { onClose: () => void }) {
         style={{ maxWidth: 720 }}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">Rôles d&apos;organisation</h2>
+          <h2 className="dialog-title">{t("dialogTitle")}</h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("closeLabel")}
           >
             ✕
           </button>
@@ -109,69 +123,74 @@ export default function RoleInfoDialog({ onClose }: { onClose: () => void }) {
 
         <div className="dialog-body">
           <p className="help">
-            Les rôles d&apos;organisation contrôlent l&apos;accès aux secrets
-            globaux, aux serveurs et aux projets. Du moins permissif au plus
-            permissif :
+            {t("dialogDesc")}
           </p>
 
-          {RIGHTS_ROWS.map((r) => (
-            <section
-              key={r.role}
-              style={{
-                paddingTop: 12,
-                borderTop: "1px solid var(--border)",
-              }}
-            >
-              <div
+          {RIGHTS_ROWS.map((r) => {
+            const roleKey = r.role.toLowerCase() as
+              | "member"
+              | "dev"
+              | "admin_dev"
+              | "admin"
+              | "owner";
+            return (
+              <section
+                key={r.role}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 6,
+                  paddingTop: 12,
+                  borderTop: "1px solid var(--border)",
                 }}
               >
-                <span className={`role ${r.badge}`}>{r.role}</span>
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{r.title}</span>
-              </div>
-              <p
-                className="help"
-                style={{ margin: "0 0 8px", fontSize: 13 }}
-              >
-                {r.summary}
-              </p>
-              <ul
-                style={{
-                  margin: 0,
-                  padding: 0,
-                  listStyle: "none",
-                  fontSize: 13,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                }}
-              >
-                {r.rights.map((item) => (
-                  <li
-                    key={item.label}
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      color: item.granted ? "var(--fg)" : "var(--muted)",
-                    }}
-                  >
-                    <span style={{ width: 22, textAlign: "center" }}>
-                      {rightIcon(item.granted)}
-                    </span>
-                    <span>{item.label}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span className={`role ${r.badge}`}>{r.role}</span>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{t(`${roleKey}.title`)}</span>
+                </div>
+                <p
+                  className="help"
+                  style={{ margin: "0 0 8px", fontSize: 13 }}
+                >
+                  {t(`${roleKey}.desc`)}
+                </p>
+                <ul
+                  style={{
+                    margin: 0,
+                    padding: 0,
+                    listStyle: "none",
+                    fontSize: 13,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
+                  {r.rights.map((item, idx) => (
+                    <li
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        color: item.granted ? "var(--fg)" : "var(--muted)",
+                      }}
+                    >
+                      <span style={{ width: 22, textAlign: "center" }}>
+                        {rightIcon(item.granted)}
+                      </span>
+                      <span>{t(`${roleKey}.${item.label}`)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
 
           <p className="help" style={{ marginTop: 8, fontSize: 12 }}>
-            👁 = lecture seule (reveal/voir) — ✅ = lecture + écriture — — =
-            pas d&apos;accès
+            {t("legend")}
           </p>
         </div>
       </div>

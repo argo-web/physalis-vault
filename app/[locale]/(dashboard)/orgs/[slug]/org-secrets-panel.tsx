@@ -1,11 +1,34 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { OrgRole } from "@prisma/client";
 import { RiHistoryLine, RiKey2Line } from "@remixicon/react";
 import SecretHistoryDialog from "@/components/SecretHistoryDialog";
 
-type SecretListItem = { key: string; updatedAt: string };
+type SecretListItem = {
+  key: string;
+  updatedAt: string;
+  createdAt: string;
+  expiresAt: string | null;
+};
+
+function fmtDate(iso?: string | null): string {
+  return iso ? new Date(iso).toLocaleDateString() : "—";
+}
+/** "" (ok) | "warn" (< 7 j) | "expired". */
+function expiryState(iso?: string | null): "" | "warn" | "expired" {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "expired";
+  if (ms < 7 * 86_400_000) return "warn";
+  return "";
+}
+const EXPIRY_COLOR: Record<string, string> = {
+  expired: "var(--danger-fg, #c0392b)",
+  warn: "#9a6a00",
+  "": "var(--muted)",
+};
 
 const ORG_ROLE_RANK: Record<OrgRole, number> = {
   MEMBER: 1,
@@ -29,6 +52,7 @@ export default function OrgSecretsPanel({
   slug: string;
   role: OrgRole;
 }) {
+  const t = useTranslations("orgs.secrets");
   const [secrets, setSecrets] = useState<SecretListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
@@ -38,7 +62,7 @@ export default function OrgSecretsPanel({
 
   // DEV+ peut lire (list + reveal). ADMIN+ peut créer/modifier/supprimer.
   const canRead = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.DEV;
-  const canManage = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.ADMIN;
+  const canManage = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.ADMIN_DEV;
 
   const reload = useCallback(async () => {
     if (!canRead) {
@@ -48,7 +72,7 @@ export default function OrgSecretsPanel({
     setError(null);
     const res = await fetch(`/api/orgs/${slug}/secrets`);
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as { secrets: SecretListItem[] };
@@ -76,7 +100,7 @@ export default function OrgSecretsPanel({
       `/api/orgs/${slug}/secrets/${encodeURIComponent(key)}`,
     );
     if (!res.ok) {
-      setError("Impossible de révéler la valeur.");
+      setError(t("revealError"));
       return;
     }
     const data = (await res.json()) as { value: string };
@@ -84,13 +108,13 @@ export default function OrgSecretsPanel({
   }
 
   async function remove(key: string) {
-    if (!confirm(`Supprimer le secret "${key}" ?`)) return;
+    if (!confirm(t("deleteConfirm", { key }))) return;
     const res = await fetch(
       `/api/orgs/${slug}/secrets/${encodeURIComponent(key)}`,
       { method: "DELETE" },
     );
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteError"));
       return;
     }
     setRevealed((r) => {
@@ -104,7 +128,7 @@ export default function OrgSecretsPanel({
   if (!canRead) {
     return (
       <p className="help">
-        Réservé aux DEV/ADMIN/OWNER de l&apos;organisation.
+        {t("readOnly")}
       </p>
     );
   }
@@ -113,26 +137,14 @@ export default function OrgSecretsPanel({
     <div className="flex flex-col gap-4">
       <div className="section-header">
         <div>
-          <h2 className="section-title">Secrets globaux de l&apos;organisation</h2>
+          <h2 className="section-title">{t("title")}</h2>
           <p className="help" style={{ marginTop: 4 }}>
-            Lus par les fonctionnalités du vault. Clés <strong>réservées</strong> :
+            {t("desc")}
           </p>
           <ul className="help" style={{ marginTop: 4, paddingLeft: 18 }}>
-            <li>
-              <code className="code-mono">GITHUB_DISPATCH_TOKEN</code> — bouton
-              Redeploy (scope <code className="code-mono">actions:write</code>)
-            </li>
-            <li>
-              <code className="code-mono">REGISTRY_PAT</code> +{" "}
-              <code className="code-mono">REGISTRY_USER</code> — exposés au bundle{" "}
-              <code className="code-mono">/api/deploy</code> sous{" "}
-              <code className="code-mono">registry.{"{user,pat}"}</code> (scope{" "}
-              <code className="code-mono">read:packages</code>)
-            </li>
-            <li>
-              <code className="code-mono">REGISTRY_URL</code> — optionnel, défaut{" "}
-              <code className="code-mono">ghcr.io</code>
-            </li>
+            <li>{t("reserved1")}</li>
+            <li>{t("reserved2")}</li>
+            <li>{t("reserved3")}</li>
           </ul>
         </div>
         {!adding && canManage && (
@@ -141,7 +153,7 @@ export default function OrgSecretsPanel({
             onClick={() => setAdding(true)}
             className="btn btn-primary btn-sm"
           >
-            + Ajouter
+            {t("addBtn")}
           </button>
         )}
       </div>
@@ -162,10 +174,10 @@ export default function OrgSecretsPanel({
       {error && <p className="error-text">{error}</p>}
 
       {secrets === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : secrets.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-title">Aucun secret global</div>
+          <div className="empty-state-title">{t("empty")}</div>
         </div>
       ) : (
         <div className="row-list">
@@ -194,19 +206,29 @@ export default function OrgSecretsPanel({
                   <div className="row-name code-mono flex items-center gap-2">
                     {s.key}
                     {RESERVED_KEYS.has(s.key) && (
-                      <span
-                        className="chip chip-active"
-                        title="Clé réservée — lue par le vault"
-                      >
-                        réservé
+                      <span className="chip chip-active">
+                        {t("reservedBadge")}
                       </span>
                     )}
                   </div>
-                  <div className="row-meta">
+                  <div
+                    className="row-meta"
+                    style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}
+                  >
+                    <span className="help" style={{ fontSize: 12 }}>
+                      {t("createdAt", { date: fmtDate(s.createdAt) })}
+                    </span>
+                    {s.expiresAt && (
+                      <span
+                        style={{ fontSize: 12, fontWeight: 600, color: EXPIRY_COLOR[expiryState(s.expiresAt)] }}
+                      >
+                        {expiryState(s.expiresAt) === "expired"
+                          ? t("expiredAt", { date: fmtDate(s.expiresAt) })
+                          : t("expiresAt", { date: fmtDate(s.expiresAt) })}
+                      </span>
+                    )}
                     <span className="code-mono">
-                      {revealed[s.key] !== undefined
-                        ? revealed[s.key]
-                        : "••••••••••••"}
+                      {revealed[s.key] !== undefined ? revealed[s.key] : "••••••••••••"}
                     </span>
                   </div>
                 </div>
@@ -216,7 +238,7 @@ export default function OrgSecretsPanel({
                     onClick={() => reveal(s.key)}
                     className="btn btn-ghost btn-xs"
                   >
-                    {revealed[s.key] !== undefined ? "Masquer" : "Afficher"}
+                    {revealed[s.key] !== undefined ? t("hideBtn") : t("revealBtn")}
                   </button>
                   {canManage && (
                     <>
@@ -224,23 +246,22 @@ export default function OrgSecretsPanel({
                         type="button"
                         onClick={() => setHistoryKey(s.key)}
                         className="btn btn-ghost btn-xs"
-                        title="Voir l'historique des versions"
                       >
-                        <RiHistoryLine size={12} aria-hidden /> Historique
+                        <RiHistoryLine size={12} aria-hidden /> {t("historyBtn")}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditKey(s.key)}
                         className="btn btn-ghost btn-xs"
                       >
-                        Modifier
+                        {t("editBtn")}
                       </button>
                       <button
                         type="button"
                         onClick={() => remove(s.key)}
                         className="btn btn-danger btn-xs"
                       >
-                        Supprimer
+                        {t("deleteBtn")}
                       </button>
                     </>
                   )}
@@ -277,8 +298,10 @@ function SecretForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const t = useTranslations("orgs.secrets");
   const [key, setKey] = useState(initialKey ?? "");
   const [value, setValue] = useState("");
+  const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const isEdit = Boolean(initialKey);
@@ -290,13 +313,13 @@ function SecretForm({
       const res = await fetch(`/api/orgs/${slug}/secrets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key, value }),
+        body: JSON.stringify({ key, value, expiresInDays }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Enregistrement impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       onSaved();
@@ -307,7 +330,7 @@ function SecretForm({
     <form onSubmit={onSubmit}>
       <div className="form-row">
         <div className="field" style={{ minWidth: 200 }}>
-          <label>Clé</label>
+          <label>{t("form.keyLabel")}</label>
           <input
             required
             readOnly={isEdit}
@@ -318,17 +341,36 @@ function SecretForm({
           />
         </div>
         <div className="field" style={{ minWidth: 240, flex: 2 }}>
-          <label>Valeur</label>
+          <label>{t("form.valueLabel")}</label>
           <input
             required
             autoFocus={isEdit}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={isEdit ? "Nouvelle valeur" : "Valeur"}
+            placeholder={isEdit ? t("form.newValuePlaceholder") : t("form.valuePlaceholder")}
             className="input input-mono"
           />
         </div>
+        <div className="field" style={{ minWidth: 160 }}>
+          <label>{t("form.expiryLabel")}</label>
+          <select
+            value={expiresInDays ?? ""}
+            onChange={(e) =>
+              setExpiresInDays(e.target.value === "" ? null : Number(e.target.value))
+            }
+            className="input"
+          >
+            <option value="">{t("form.expiry.never")}</option>
+            <option value="30">{t("form.expiry.30d")}</option>
+            <option value="60">{t("form.expiry.60d")}</option>
+            <option value="90">{t("form.expiry.90d")}</option>
+            <option value="365">{t("form.expiry.1y")}</option>
+          </select>
+        </div>
       </div>
+      <p className="help" style={{ marginTop: 6, fontSize: 12 }}>
+        {t("form.expiryHint")}
+      </p>
       {error && (
         <p className="error-text" style={{ marginTop: 8 }}>
           {error}
@@ -340,14 +382,14 @@ function SecretForm({
           disabled={pending}
           className="btn btn-primary btn-sm"
         >
-          {pending ? "Enregistrement..." : isEdit ? "Mettre à jour" : "Créer"}
+          {pending ? t("form.savingBtn") : isEdit ? t("form.updateBtn") : t("form.submitBtn")}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="btn btn-ghost btn-sm"
         >
-          Annuler
+          {t("form.cancelBtn")}
         </button>
       </div>
     </form>

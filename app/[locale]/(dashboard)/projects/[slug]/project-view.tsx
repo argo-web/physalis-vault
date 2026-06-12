@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { ProjectRole } from "@prisma/client";
+import { hasDevPrivileges } from "@/lib/roles";
 import SecretsPanel from "./secrets-panel";
 import TokensPanel from "./tokens-panel";
 import ComposePanel from "./compose-panel";
-import AccessPanel from "./access-panel";
+import InfosPanel from "./infos-panel";
 import PoliciesPanel from "./policies-panel";
 import MembersPanel from "./members-panel";
 import SettingsDialog from "./settings-dialog";
@@ -27,9 +29,8 @@ const ROLE_RANK: Record<ProjectRole, number> = {
 };
 
 const ENV_ORDER = ["test", "development", "staging", "production", "main"];
-const ENV_DISPLAY_NAMES: Record<string, string> = {
-  development: "développement",
-};
+const ENV_DISPLAY_NAMES: Record<string, string> = {};
+
 
 function envDisplay(name: string): string {
   return ENV_DISPLAY_NAMES[name] ?? name;
@@ -72,6 +73,7 @@ export default function ProjectView({
    *  qu'un ProjectOWNER, contrairement à un ProjectEDITOR explicite. */
   orgRole: "OWNER" | "ADMIN" | "ADMIN_DEV" | "DEV" | "MEMBER" | null;
 }) {
+  const t = useTranslations("projects");
   const sortedEnvs = [...environments].sort(sortEnvs);
   const [tab, setTab] = useState<MainTab>({ kind: "access" });
   const [envSubTab, setEnvSubTab] = useState<
@@ -84,7 +86,7 @@ export default function ProjectView({
   // Edition des parametres techniques (name, slug, github config) :
   // ouvert a EDITOR+. La suppression du projet reste OWNER cote backend.
   const canEditProjectSettings = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
-  const canManagePolicies = role === "OWNER" || orgRole === "DEV";
+  const canManagePolicies = role === "OWNER" || hasDevPrivileges(orgRole);
   const canRedeploy = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
 
   const activeEnvName = tab.kind === "env" ? tab.envName : null;
@@ -103,14 +105,14 @@ export default function ProjectView({
             className={`tab ${tab.kind === "access" ? "active" : ""}`}
             onClick={() => setTab({ kind: "access" })}
           >
-            Accès
+            {t("tabs.access")}
           </button>
           <button
             type="button"
             className={`tab ${tab.kind === "vault" ? "active" : ""}`}
             onClick={() => setTab({ kind: "vault" })}
           >
-            🔒 Coffre
+            🔒 {t("tabs.vault")}
           </button>
         </div>
 
@@ -141,7 +143,7 @@ export default function ProjectView({
               className={`tab ${tab.kind === "members" ? "active" : ""}`}
               onClick={() => setTab({ kind: "members" })}
             >
-              Membres
+              {t("tabs.members")}
             </button>
           )}
           <button
@@ -149,15 +151,15 @@ export default function ProjectView({
             className={`tab ${tab.kind === "policies" ? "active" : ""}`}
             onClick={() => setTab({ kind: "policies" })}
           >
-            Policies
+            {t("tabs.policies")}
           </button>
           {canEditProjectSettings && (
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
               className="tab"
-              aria-label="Paramètres du projet"
-              title="Paramètres"
+              aria-label={t("settingsAriaLabel")}
+              title={t("settingsTitle")}
               style={{ padding: "10px 14px" }}
             >
               <SettingsIcon />
@@ -168,7 +170,7 @@ export default function ProjectView({
 
       {/* Content */}
       {tab.kind === "access" ? (
-        <AccessPanel slug={slug} role={role} environments={sortedEnvs} />
+        <InfosPanel slug={slug} role={role} environments={sortedEnvs} />
       ) : tab.kind === "vault" ? (
         <TeamVaultPanel
           scope={{ kind: "project", projectSlug: slug }}
@@ -202,14 +204,14 @@ export default function ProjectView({
                 className={`subtab ${envSubTab === "compose" ? "active" : ""}`}
                 onClick={() => setEnvSubTab("compose")}
               >
-                Docker compose
+                {t("tabs.docker")}
               </button>
               <button
                 type="button"
                 className={`subtab ${envSubTab === "tokens" ? "active" : ""}`}
                 onClick={() => setEnvSubTab("tokens")}
               >
-                Machine tokens
+                {t("tabs.tokens")}
               </button>
             </div>
             {canRedeploy && (
@@ -222,7 +224,13 @@ export default function ProjectView({
           </div>
 
           {envSubTab === "secrets" && (
-            <SecretsPanel slug={slug} env={activeEnv.name} role={role} />
+            <SecretsPanel
+              slug={slug}
+              env={activeEnv.name}
+              role={role}
+              rotationFeatureEnabled={false}
+              orgSlug={orgSlug}
+            />
           )}
           {envSubTab === "tokens" && (
             <TokensPanel slug={slug} env={activeEnv.name} role={role} />
@@ -233,8 +241,8 @@ export default function ProjectView({
         </div>
       ) : (
         <div className="empty-state">
-          <div className="empty-state-title">Aucun environnement</div>
-          <div>Cliquez sur ⚙ en haut à droite pour en créer un.</div>
+          <div className="empty-state-title">{t("noEnvTitle")}</div>
+          <div>{t("noEnvHint")}</div>
         </div>
       )}
 
@@ -262,6 +270,7 @@ function RedeployButton({
   envName: string;
   githubRepo: string | null;
 }) {
+  const t = useTranslations("projects");
   const [pending, startTransition] = useTransition();
   const [confirm, setConfirm] = useState(false);
   const [feedback, setFeedback] = useState<
@@ -287,11 +296,11 @@ function RedeployButton({
       if (!res.ok) {
         setFeedback({
           kind: "error",
-          message: data?.error ?? "Redeploy impossible.",
+          message: data?.error ?? t("redeploy.error"),
         });
         return;
       }
-      setFeedback({ kind: "success", message: "Workflow déclenché." });
+      setFeedback({ kind: "success", message: t("redeploy.success") });
       setTimeout(() => setFeedback(null), 4000);
     });
   }
@@ -302,7 +311,7 @@ function RedeployButton({
         <div className="dialog-overlay">
           <div className="dialog">
             <div className="dialog-header">
-              <h2 className="dialog-title">Confirmer le redeploy</h2>
+              <h2 className="dialog-title">{t("redeploy.confirm", { name: envName })}</h2>
               <button
                 type="button"
                 onClick={() => setConfirm(false)}
@@ -311,12 +320,6 @@ function RedeployButton({
               >
                 ✕
               </button>
-            </div>
-            <div className="dialog-body">
-              <p className="text-sm">
-                Déclencher un redeploy GitHub Actions pour l&apos;environnement{" "}
-                <strong>{envName}</strong> ?
-              </p>
             </div>
             <div className="dialog-footer">
               <button
@@ -331,7 +334,7 @@ function RedeployButton({
                 onClick={handleConfirm}
                 className="btn btn-accent btn-sm"
               >
-                Déclencher
+                {t("redeploy.triggerBtn")}
               </button>
             </div>
           </div>
@@ -351,14 +354,9 @@ function RedeployButton({
           type="button"
           onClick={() => { setFeedback(null); setConfirm(true); }}
           disabled={disabled || pending}
-          title={
-            disabled
-              ? "Configurer githubRepo dans les paramètres du projet"
-              : `Déclencher workflow_dispatch sur ${envName}`
-          }
           className="btn btn-accent btn-sm"
         >
-          {pending ? "Déclenchement..." : "↻ Redeploy"}
+          {pending ? t("redeploy.triggeringBtn") : t("redeploy.btn")}
         </button>
       </div>
     </>

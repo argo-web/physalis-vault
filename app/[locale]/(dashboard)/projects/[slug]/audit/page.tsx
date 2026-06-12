@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isPlatformAdmin } from "@/lib/roles";
+import { getTranslations } from "next-intl/server";
 import AuditLogTable from "@/components/AuditLogTable";
 
 export default async function ProjectAuditPage({
@@ -10,6 +11,7 @@ export default async function ProjectAuditPage({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations("projects.audit");
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -48,8 +50,9 @@ export default async function ProjectAuditPage({
           <div>
             <h1 className="page-title">Audit log</h1>
             <div className="page-subtitle">
-              Historique des actions sur ce projet (secrets, tokens). Cliquez
-              sur une ligne pour voir les détails.
+              {isGlobalAdmin || orgRole === "OWNER" || orgRole === "ADMIN"
+                ? t("adminDesc")
+                : t("memberDesc")}
             </div>
           </div>
         </div>

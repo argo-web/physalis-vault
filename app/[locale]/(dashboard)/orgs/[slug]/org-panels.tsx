@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import type { OrgRole } from "@prisma/client";
 import { RiSafe2Line } from "@remixicon/react";
 import OrgMembersPanel from "./members-panel";
@@ -18,7 +19,12 @@ const ORG_ROLE_RANK: Record<OrgRole, number> = {
   OWNER: 5,
 };
 
-type Tab = "members" | "secrets" | "servers" | "vault" | "tokens";
+type Tab =
+  | "members"
+  | "secrets"
+  | "servers"
+  | "vault"
+  | "tokens";
 
 export default function OrgPanels({
   slug,
@@ -29,6 +35,7 @@ export default function OrgPanels({
   orgName: string;
   role: OrgRole;
 }) {
+  const t = useTranslations("orgs");
   const [tab, setTab] = useState<Tab>("vault");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -49,7 +56,7 @@ export default function OrgPanels({
             className={`tab ${tab === "vault" ? "active" : ""}`}
             onClick={() => setTab("vault")}
           >
-            <RiSafe2Line size={14} aria-hidden /> Coffre d&apos;équipe
+            <RiSafe2Line size={14} aria-hidden /> {t("tabs.vault")}
           </button>
           {canRead && (
             <button
@@ -57,7 +64,7 @@ export default function OrgPanels({
               className={`tab ${tab === "secrets" ? "active" : ""}`}
               onClick={() => setTab("secrets")}
             >
-              Secrets globaux
+              {t("tabs.secrets")}
             </button>
           )}
           {canRead && (
@@ -66,7 +73,7 @@ export default function OrgPanels({
               className={`tab ${tab === "servers" ? "active" : ""}`}
               onClick={() => setTab("servers")}
             >
-              Serveurs
+              {t("tabs.servers")}
             </button>
           )}
           <button
@@ -74,16 +81,15 @@ export default function OrgPanels({
             className={`tab ${tab === "members" ? "active" : ""}`}
             onClick={() => setTab("members")}
           >
-            Membres
+            {t("tabs.members")}
           </button>
           {canRead && (
             <button
               type="button"
               className={`tab ${tab === "tokens" ? "active" : ""}`}
               onClick={() => setTab("tokens")}
-              title="Tokens d'intégration (N8n, Make, scripts)"
             >
-              Tokens
+              {t("tabs.tokens")}
             </button>
           )}
         </div>
@@ -92,8 +98,7 @@ export default function OrgPanels({
             type="button"
             onClick={() => setSettingsOpen(true)}
             className="tab"
-            aria-label="Paramètres de l'organisation"
-            title="Paramètres"
+            aria-label={t("tabs.settings")}
             style={{ padding: "10px 14px" }}
           >
             <SettingsIcon />
@@ -121,6 +126,7 @@ export default function OrgPanels({
           slug={slug}
           initialName={orgName}
           role={role}
+          rotationFeatureEnabled={false}
           onClose={() => setSettingsOpen(false)}
         />
       )}

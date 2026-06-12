@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { getTranslations } from "next-intl/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isPlatformAdmin } from "@/lib/roles";
+import { isPlatformAdmin, hasDevPrivileges } from "@/lib/roles";
 import OrgPanels from "./org-panels";
 
 export default async function OrgPage({
@@ -10,6 +11,7 @@ export default async function OrgPage({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations("orgs");
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -18,8 +20,12 @@ export default async function OrgPage({
 
   const org = await prisma.organization.findUnique({
     where: { slug },
-    include: {
-      members: { where: { userId: session.user.id } },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      rotationFeatureEnabled: true,
+      members: { where: { userId: session.user.id }, select: { role: true } },
       _count: { select: { projects: true, members: true } },
     },
   });
@@ -30,7 +36,8 @@ export default async function OrgPage({
 
   // Audit log accessible à DEV+. ADMIN/OWNER voient tout l'org, DEV ne voit
   // que ses propres actions sur les projets accessibles (filtré côté API).
-  const canSeeAudit = role === "OWNER" || role === "ADMIN" || role === "DEV";
+  const canSeeAudit =
+    role === "OWNER" || role === "ADMIN" || hasDevPrivileges(role);
 
   return (
     <div className="page">
@@ -45,7 +52,7 @@ export default async function OrgPage({
               <span className={`role role-${role.toLowerCase()}`}>{role}</span>
             </h1>
             <div className="page-subtitle">
-              {org._count.projects} projets · {org._count.members} membres
+              {t("pageStats", { projects: org._count.projects, members: org._count.members })}
             </div>
           </div>
           {canSeeAudit && (
@@ -60,7 +67,11 @@ export default async function OrgPage({
           )}
         </div>
 
-        <OrgPanels slug={org.slug} orgName={org.name} role={role} />
+        <OrgPanels
+          slug={org.slug}
+          orgName={org.name}
+          role={role}
+        />
       </div>
     </div>
   );

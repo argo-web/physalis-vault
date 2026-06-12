@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { ProjectRole } from "@prisma/client";
-import { RiDownload2Line, RiHistoryLine, RiKey2Line } from "@remixicon/react";
+import { RiDownload2Line, RiHistoryLine, RiKey2Line, RiUpload2Line } from "@remixicon/react";
+import { useTranslations } from "next-intl";
 import {
   SECRET_CATEGORIES,
   SECRET_CATEGORY_LABELS,
@@ -13,11 +14,15 @@ import SecretHistoryDialog from "@/components/SecretHistoryDialog";
 import TagsInput from "@/components/TagsInput";
 import SecretsImportDialog from "./secrets-import-dialog";
 
+type RotationStrategy = "DATABASE" | "JWT_SECRET" | "REMINDER" | "API_KEY";
+
 type SecretListItem = {
   key: string;
   category: SecretCategory | null;
   tags: string[];
   updatedAt: string;
+  rotationEnabled: boolean;
+  rotationStrategy: RotationStrategy | null;
 };
 
 const ROLE_RANK: Record<ProjectRole, number> = {
@@ -30,11 +35,16 @@ export default function SecretsPanel({
   slug,
   env,
   role,
+  rotationFeatureEnabled,
+  orgSlug,
 }: {
   slug: string;
   env: string;
   role: ProjectRole;
+  rotationFeatureEnabled: boolean;
+  orgSlug: string;
 }) {
+  const t = useTranslations("projects.secrets");
   const [secrets, setSecrets] = useState<SecretListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
@@ -42,6 +52,8 @@ export default function SecretsPanel({
   const [importing, setImporting] = useState(false);
   const [editKey, setEditKey] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState<string | null>(null);
+  const [rotationKey, setRotationKey] = useState<string | null>(null);
+  const [rotationCategory, setRotationCategory] = useState<string | null>(null);
 
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
 
@@ -49,7 +61,7 @@ export default function SecretsPanel({
   const allTags = useMemo<string[]>(() => {
     if (!secrets) return [];
     const set = new Set<string>();
-    for (const s of secrets) for (const t of s.tags) set.add(t);
+    for (const s of secrets) for (const tag of s.tags) set.add(tag);
     return Array.from(set).sort();
   }, [secrets]);
 
@@ -57,7 +69,7 @@ export default function SecretsPanel({
     setError(null);
     const res = await fetch(`/api/projects/${slug}/${env}/secrets`);
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("updateError"));
       return;
     }
     const data = (await res.json()) as { secrets: SecretListItem[] };
@@ -113,7 +125,7 @@ export default function SecretsPanel({
       `/api/projects/${slug}/${env}/secrets/${encodeURIComponent(key)}`,
     );
     if (!res.ok) {
-      setError("Impossible de révéler la valeur.");
+      setError(t("deleteError"));
       return;
     }
     const data = (await res.json()) as { value: string };
@@ -121,13 +133,13 @@ export default function SecretsPanel({
   }
 
   async function remove(key: string) {
-    if (!confirm(`Supprimer ${key} ?`)) return;
+    if (!confirm(t("deleteConfirm", { key }))) return;
     const res = await fetch(
       `/api/projects/${slug}/${env}/secrets/${encodeURIComponent(key)}`,
       { method: "DELETE" },
     );
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteError"));
       return;
     }
     setRevealed((r) => {
@@ -149,7 +161,7 @@ export default function SecretsPanel({
       },
     );
     if (!res.ok) {
-      setError("Changement de catégorie impossible.");
+      setError(t("updateError"));
       return;
     }
     reload();
@@ -184,7 +196,18 @@ export default function SecretsPanel({
       <div className="row">
         <div className="row-icon"><RiKey2Line size={18} aria-hidden /></div>
         <div className="row-info">
-          <div className="row-name code-mono">{s.key}</div>
+          <div className="row-name code-mono" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {s.key}
+            {s.rotationEnabled && (
+              <span
+                className="chip"
+                style={{ fontSize: 10, background: "rgba(99, 102, 241, 0.15)", color: "#6366f1", fontFamily: "inherit" }}
+                title={`Rotation automatique (${s.rotationStrategy ?? ""})`}
+              >
+                ↻
+              </span>
+            )}
+          </div>
           <div className="row-meta">
             <span className="code-mono">
               {revealed[s.key] !== undefined ? revealed[s.key] : "••••••••••••"}
@@ -206,7 +229,7 @@ export default function SecretsPanel({
             onClick={() => reveal(s.key)}
             className="btn btn-ghost btn-xs"
           >
-            {revealed[s.key] !== undefined ? "Masquer" : "Afficher"}
+            {revealed[s.key] !== undefined ? t("hideBtn") : t("revealBtn")}
           </button>
           {canEdit && (
             <>
@@ -214,30 +237,44 @@ export default function SecretsPanel({
                 type="button"
                 onClick={() => setHistoryKey(s.key)}
                 className="btn btn-ghost btn-xs"
-                title="Voir l'historique des versions"
+                title={t("historyBtn")}
               >
-                <RiHistoryLine size={12} aria-hidden /> Historique
+                <RiHistoryLine size={12} aria-hidden /> {t("historyBtn")}
               </button>
+              {rotationFeatureEnabled && (
+                (s.category === "database" && s.key.toLowerCase().includes("password")) ||
+                s.category === "infra" ||
+                s.category === "services"
+              ) && (
+                <button
+                  type="button"
+                  onClick={() => { setRotationKey(s.key); setRotationCategory(s.category ?? null); }}
+                  className="btn btn-ghost btn-xs"
+                  title="Configurer la rotation automatique"
+                >
+                  Rotation
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setEditKey(s.key)}
                 className="btn btn-ghost btn-xs"
               >
-                Modifier
+                {t("editBtn")}
               </button>
               <button
                 type="button"
                 onClick={() => remove(s.key)}
                 className="btn btn-danger btn-xs"
               >
-                Supprimer
+                {t("deleteBtn")}
               </button>
               <select
                 value={s.category ?? ""}
                 onChange={(e) =>
                   updateCategory(s.key, e.target.value as SecretCategory | "")
                 }
-                title="Changer la catégorie sans modifier la valeur"
+                title={t("categoryLabel")}
                 className="select"
                 style={{ width: "auto", padding: "4px 8px", fontSize: 11 }}
               >
@@ -259,25 +296,37 @@ export default function SecretsPanel({
     <div className="flex flex-col gap-4">
       <div className="section-header">
         <h2 className="section-title">
-          Secrets — <span className="code-mono">{env}</span>
+          {t("title", { env })}
         </h2>
-        {canEdit && !adding && (
+        {!adding && (
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setImporting(true)}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setImporting(true)}
+                className="btn btn-ghost btn-sm"
+                title={t("importBtn")}
+              >
+                <RiUpload2Line size={14} aria-hidden /> {t("importBtn")}
+              </button>
+            )}
+            <a
+              href={`/api/projects/${slug}/${env}/secrets/export`}
+              download={`.env.${orgSlug}-${slug}-${env}`}
               className="btn btn-ghost btn-sm"
-              title="Importer un fichier .env"
+              title={t("exportBtn")}
             >
-              <RiDownload2Line size={14} aria-hidden /> Importer .env
-            </button>
-            <button
-              type="button"
-              onClick={() => setAdding(true)}
-              className="btn btn-primary btn-sm"
-            >
-              + Ajouter un secret
-            </button>
+              <RiDownload2Line size={14} aria-hidden /> {t("exportBtn")}
+            </a>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setAdding(true)}
+                className="btn btn-primary btn-sm"
+              >
+                {t("addBtn")}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -308,10 +357,10 @@ export default function SecretsPanel({
       {error && <p className="error-text">{error}</p>}
 
       {secrets === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("empty")}</p>
       ) : secrets.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-title">Aucun secret</div>
+          <div className="empty-state-title">{t("empty")}</div>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
@@ -340,12 +389,20 @@ export default function SecretsPanel({
           secretKey={historyKey}
           onClose={() => setHistoryKey(null)}
           onRestored={() => {
-            // Le rollback a remplacé la valeur courante. On recharge la
-            // liste pour mettre à jour `updatedAt` ; les valeurs révélées
-            // localement deviennent obsolètes, on les vide.
             setRevealed({});
             reload();
           }}
+        />
+      )}
+
+      {rotationKey && (
+        <SecretRotationDialog
+          slug={slug}
+          env={env}
+          orgSlug={orgSlug}
+          secretKey={rotationKey}
+          category={rotationCategory}
+          onClose={() => { setRotationKey(null); setRotationCategory(null); reload(); }}
         />
       )}
     </div>
@@ -371,6 +428,7 @@ function SecretForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const t = useTranslations("projects.secrets");
   const [key, setKey] = useState(initialKey ?? "");
   const [value, setValue] = useState("");
   const [category, setCategory] = useState<SecretCategory | "">(
@@ -421,7 +479,7 @@ function SecretForm({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Enregistrement impossible.");
+        setError(data?.error ?? t("updateError"));
         return;
       }
       onSaved();
@@ -432,37 +490,35 @@ function SecretForm({
     <form onSubmit={onSubmit}>
       <div className="form-row">
         <div className="field" style={{ minWidth: 200 }}>
-          <label>Clé</label>
+          <label>{t("form.keyLabel")}</label>
           <input
             required
             value={key}
             onChange={(e) => setKey(e.target.value.toUpperCase())}
-            placeholder="DATABASE_URL"
+            placeholder={t("form.keyPlaceholder")}
             className="input input-mono"
           />
           {isEdit && key !== initialKey && (
             <div className="help">
-              La clé sera renommée. Les références extérieures (n8n,
-              workflows…) utilisant l&apos;ancienne clé devront être mises
-              à jour.
+              {t("form.renameNote")}
             </div>
           )}
         </div>
         <div className="field" style={{ minWidth: 240, flex: 2 }}>
-          <label>Valeur{isEdit ? " (optionnel)" : ""}</label>
+          <label>{t(isEdit ? "form.valueLabelOptional" : "form.valueLabel")}</label>
           <input
             required={!isEdit}
             autoFocus={isEdit}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={isEdit ? "(laisser vide pour ne pas modifier)" : "Valeur"}
+            placeholder={t("form.valuePlaceholder")}
             className="input input-mono"
           />
         </div>
       </div>
       <div className="form-row" style={{ marginTop: 8 }}>
         <div className="field" style={{ maxWidth: 280 }}>
-          <label>Catégorie</label>
+          <label>{t("categoryLabel")}</label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as SecretCategory | "")}
@@ -479,9 +535,9 @@ function SecretForm({
       </div>
       <div className="field" style={{ marginTop: 8 }}>
         <label>
-          Tags techniques{" "}
+          {t("form.tagsLabel")}{" "}
           <span className="text-muted" style={{ fontSize: 11 }}>
-            (pour les intégrations N8n / Make — ex: postgres, stripe)
+            {t("form.tagsNote")}
           </span>
         </label>
         <TagsInput value={tags} onChange={setTags} suggestions={allTags ?? []} />
@@ -497,16 +553,408 @@ function SecretForm({
           disabled={pending}
           className="btn btn-primary btn-sm"
         >
-          {pending ? "Enregistrement..." : isEdit ? "Mettre à jour" : "Créer"}
+          {pending ? t("form.submitBtn") : isEdit ? t("form.updateBtn") : t("form.submitBtn")}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="btn btn-ghost btn-sm"
         >
-          Annuler
+          {t("form.cancelBtn")}
         </button>
       </div>
     </form>
+  );
+}
+
+type RotationConfig = {
+  rotationEnabled: boolean;
+  rotationStrategy: RotationStrategy | null;
+  rotationIntervalDays: number | null;
+  rotationNeedsFullDeploy: boolean;
+  rotationLastAt: string | null;
+  rotationNextAt: string | null;
+  rotationLastStatus: string | null;
+  rotationErrorCount: number;
+  dbHost: string | null;
+  dbPort: number | null;
+  dbName: string | null;
+  dbType: string | null;
+  dbUser: string | null;
+  apiKeyId: string | null;
+  apiKey: { apiId: string } | null;
+};
+
+type DetectedDb = {
+  prefix: string;
+  dbHost: string | null;
+  dbPort: number | null;
+  dbName: string | null;
+  dbType: string | null;
+  dbUser: string | null;
+};
+
+
+const DB_TYPE_LABELS: Record<string, string> = {
+  POSTGRESQL: "PostgreSQL",
+  MYSQL: "MySQL",
+  MONGODB: "MongoDB",
+};
+
+// Strategy labels are now built dynamically in the component using t()
+
+const STRATEGIES_BY_CATEGORY: Record<string, RotationStrategy[]> = {
+  database: ["DATABASE", "API_KEY", "REMINDER"],
+  infra: ["JWT_SECRET", "API_KEY", "REMINDER"],
+};
+
+function SecretRotationDialog({
+  slug,
+  env,
+  secretKey,
+  category,
+  onClose,
+}: {
+  slug: string;
+  env: string;
+  orgSlug: string;
+  secretKey: string;
+  category: string | null;
+  onClose: () => void;
+}) {
+  const t = useTranslations("projects.secrets.rotation");
+  const availableStrategies: RotationStrategy[] =
+    STRATEGIES_BY_CATEGORY[category ?? ""] ?? (["DATABASE", "JWT_SECRET", "API_KEY", "REMINDER"] as RotationStrategy[]);
+  const defaultStrategy: RotationStrategy =
+    category === "infra" ? "JWT_SECRET" : "DATABASE";
+  const STRATEGY_LABELS: Record<RotationStrategy, string> = {
+    DATABASE: t("strategyDatabase"),
+    JWT_SECRET: t("strategyJwtSecret"),
+    REMINDER: t("strategyReminder"),
+    API_KEY: t("strategyApiKey"),
+  };
+
+  const [config, setConfig] = useState<RotationConfig | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [strategy, setStrategy] = useState<RotationStrategy>(defaultStrategy);
+  const [intervalDays, setIntervalDays] = useState<string>("30");
+  const [dbHost, setDbHost] = useState<string>("");
+  const [dbPort, setDbPort] = useState<string>("");
+  const [dbName, setDbName] = useState<string>("");
+  const [dbType, setDbType] = useState<string>("POSTGRESQL");
+  const [dbUser, setDbUser] = useState<string>("");
+  const [detected, setDetected] = useState<DetectedDb[]>([]);
+  const [detecting, setDetecting] = useState(false);
+  const [needsFullDeploy, setNeedsFullDeploy] = useState(false);
+  const [apiKeyId, setApiKeyId] = useState<string>("");
+  const [apis, setApis] = useState<{ id: string; name: string }[]>([]);
+  const [selectedApiId, setSelectedApiId] = useState<string>("");
+  const [apiKeys, setApiKeys] = useState<{ id: string; name: string; keyPrefix: string; revokedAt: string | null }[]>([]);
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    fetch(`/api/projects/${slug}/${env}/secrets/${encodeURIComponent(secretKey)}/rotation`)
+      .then((r) => r.json() as Promise<{ rotation: RotationConfig }>)
+      .then((data) => {
+        const r = data.rotation;
+        setConfig(r);
+        setEnabled(r.rotationEnabled);
+        setStrategy(r.rotationStrategy ?? "REMINDER");
+        setIntervalDays(r.rotationIntervalDays ? String(r.rotationIntervalDays) : "30");
+        setDbHost(r.dbHost ?? "");
+        setDbPort(r.dbPort ? String(r.dbPort) : "");
+        setDbName(r.dbName ?? "");
+        setDbType(r.dbType ?? "POSTGRESQL");
+        setDbUser(r.dbUser ?? "");
+        setApiKeyId(r.apiKeyId ?? "");
+        setSelectedApiId(r.apiKey?.apiId ?? "");
+        setNeedsFullDeploy(r.rotationNeedsFullDeploy ?? false);
+      })
+      .catch(() => setError(t("loading")));
+
+    // Charge les APIs du projet pour la stratégie API_KEY
+    fetch(`/api/gateway/apis?project=${slug}`)
+      .then((r) => r.ok ? r.json() as Promise<{ apis: { id: string; name: string }[] }> : Promise.resolve({ apis: [] }))
+      .then((data) => setApis(data.apis ?? []))
+      .catch(() => null);
+  }, [slug, env, secretKey]);
+
+  useEffect(() => {
+    if (!selectedApiId) { setApiKeys([]); return; }
+    setLoadingKeys(true);
+    fetch(`/api/gateway/apis/${selectedApiId}/keys`)
+      .then((r) => r.ok ? r.json() as Promise<{ keys: { id: string; name: string; keyPrefix: string; revokedAt: string | null }[] }> : Promise.resolve({ keys: [] }))
+      .then((data) => setApiKeys((data.keys ?? []).filter((k) => !k.revokedAt)))
+      .catch(() => null)
+      .finally(() => setLoadingKeys(false));
+  }, [selectedApiId]);
+
+  function applyDetected(d: DetectedDb) {
+    if (d.dbHost) setDbHost(d.dbHost);
+    if (d.dbPort) setDbPort(String(d.dbPort));
+    if (d.dbName) setDbName(d.dbName);
+    if (d.dbType) setDbType(d.dbType);
+    if (d.dbUser) setDbUser(d.dbUser);
+    setDetected([]);
+  }
+
+  function autoDetect() {
+    setDetecting(true);
+    fetch(`/api/projects/${slug}/${env}/secrets/db-detect`)
+      .then(async (r) => {
+        if (!r.ok) return;
+        const d = (await r.json()) as { detected: DetectedDb[] };
+        const groups = d.detected ?? [];
+        if (groups.length === 1) {
+          applyDetected(groups[0]);
+        } else {
+          setDetected(groups);
+        }
+      })
+      .catch(() => null)
+      .finally(() => setDetecting(false));
+  }
+
+  function save(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    startTransition(async () => {
+      const body: Record<string, unknown> = {
+        rotationEnabled: enabled,
+        rotationStrategy: enabled ? strategy : null,
+        rotationIntervalDays: enabled && intervalDays ? Number(intervalDays) : null,
+      };
+      if (enabled && strategy === "DATABASE") {
+        body.dbHost = dbHost || null;
+        body.dbPort = dbPort ? Number(dbPort) : null;
+        body.dbName = dbName || null;
+        body.dbType = dbType || null;
+        body.dbUser = dbUser || null;
+      }
+      if (enabled && strategy === "API_KEY") {
+        body.apiKeyId = apiKeyId || null;
+      }
+      body.rotationNeedsFullDeploy = needsFullDeploy;
+      const res = await fetch(
+        `/api/projects/${slug}/${env}/secrets/${encodeURIComponent(secretKey)}/rotation`,
+        { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setError(data?.error ?? t("saveError"));
+        return;
+      }
+      onClose();
+    });
+  }
+
+  return (
+    <div className="dialog-overlay" onClick={onClose}>
+      <div className="dialog dialog-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-header">
+          <h2 className="dialog-title">
+            {t("dialogTitle", { key: secretKey })}
+          </h2>
+          <button type="button" onClick={onClose} className="dialog-close" aria-label={t("closeLabel")}>✕</button>
+        </div>
+
+        <div className="dialog-body">
+          {config === null ? (
+            <p className="help">{t("loading")}</p>
+          ) : (
+            <form onSubmit={save} className="flex flex-col gap-4">
+              {config.rotationLastStatus && (
+                <div
+                  style={{
+                    padding: "8px 12px", borderRadius: 4, fontSize: 13,
+                    background: config.rotationLastStatus === "success" ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
+                    border: `1px solid ${config.rotationLastStatus === "success" ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+                  }}
+                >
+                  {t("lastStatus")} <strong>{config.rotationLastStatus === "success" ? t("lastStatusSuccess") : t("lastStatusError", { count: config.rotationErrorCount })}</strong>
+                  {config.rotationLastAt && (
+                    <span className="text-muted" style={{ marginLeft: 8, fontSize: 11 }}>
+                      {new Date(config.rotationLastAt).toLocaleString()}
+                    </span>
+                  )}
+                  {config.rotationNextAt && (
+                    <span className="text-muted" style={{ marginLeft: 8, fontSize: 11 }}>
+                      {t("nextAt", { date: new Date(config.rotationNextAt).toLocaleString() })}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} disabled={pending} />
+                <span>{t("enableLabel")}</span>
+              </label>
+
+              {enabled && (
+                <>
+                  <div className="field">
+                    <label>{t("strategyLabel")}</label>
+                    <select value={strategy} onChange={(e) => setStrategy(e.target.value as RotationStrategy)} className="select" disabled={pending}>
+                      {availableStrategies.map((s) => (
+                        <option key={s} value={s}>{STRATEGY_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>{t("intervalLabel")}</label>
+                    <input type="number" value={intervalDays} onChange={(e) => setIntervalDays(e.target.value)} min={1} max={3650} className="input" style={{ maxWidth: 120 }} disabled={pending} placeholder="30" />
+                  </div>
+
+                  {strategy === "DATABASE" && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span className="help" style={{ fontSize: 12 }}>{t("dbConnectionLabel")}</span>
+                        <button type="button" onClick={autoDetect} disabled={detecting || pending} className="btn btn-ghost btn-xs">
+                          {detecting ? t("detectingBtn") : t("detectBtn")}
+                        </button>
+                      </div>
+
+                      {detected.length > 1 && (
+                        <div className="card" style={{ padding: 10 }}>
+                          <p className="help" style={{ marginBottom: 6 }}>{t("multipleGroupsHint")}</p>
+                          {detected.map((d) => (
+                            <button key={d.prefix} type="button" onClick={() => applyDetected(d)} className="btn btn-ghost btn-xs" style={{ display: "block", marginBottom: 4, textAlign: "left" }}>
+                              <strong>{d.prefix}</strong> — {d.dbHost}:{d.dbPort}/{d.dbName} ({d.dbType ?? "?"})
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="form-row">
+                        <div className="field" style={{ flex: 2 }}>
+                          <label>{t("dbTypeLabel")}</label>
+                          <select value={dbType} onChange={(e) => setDbType(e.target.value)} className="select" disabled={pending}>
+                            {Object.entries(DB_TYPE_LABELS).map(([k, v]) => (
+                              <option key={k} value={k}>{v}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="field" style={{ flex: 3 }}>
+                          <label>{t("dbHostLabel")} <span style={{ fontSize: "0.85em", textTransform: "lowercase" }}>({t("dbHostNote")})</span></label>
+                          <input value={dbHost} onChange={(e) => setDbHost(e.target.value)} placeholder="db.example.com" className="input" disabled={pending} />
+                        </div>
+                        <div className="field" style={{ width: 80 }}>
+                          <label>{t("dbPortLabel")}</label>
+                          <input value={dbPort} onChange={(e) => setDbPort(e.target.value)} type="number" placeholder="5432" className="input" disabled={pending} />
+                        </div>
+                      </div>
+
+                      <div className="form-row" style={{ alignItems: "flex-start" }}>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>{t("dbNameLabel")}</label>
+                          <input value={dbName} onChange={(e) => setDbName(e.target.value)} placeholder="myapp_prod" className="input input-mono" disabled={pending} />
+                        </div>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>{t("dbUserLabel")}</label>
+                          <input value={dbUser} onChange={(e) => setDbUser(e.target.value)} placeholder="app_user" className="input input-mono" disabled={pending} />
+                          <p className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("dbUserNote")}</p>
+                        </div>
+                      </div>
+
+                    </>
+                  )}
+
+                  {strategy === "JWT_SECRET" && (
+                    <p className="help" style={{ fontSize: 12 }}>
+                      {t("jwtHint")}
+                    </p>
+                  )}
+
+                  {strategy !== "REMINDER" && (
+                    <div className="field">
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                        <input
+                          type="checkbox"
+                          checked={needsFullDeploy}
+                          onChange={(e) => setNeedsFullDeploy(e.target.checked)}
+                          disabled={pending}
+                        />
+                        <span style={{ fontSize: 13 }}>
+                          {t("fullDeployLabel")}
+                          <span className="help" style={{ display: "block", fontSize: 11, fontWeight: "normal" }}>
+                            {t("fullDeployNote")}
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  )}
+
+                  {strategy === "API_KEY" && (
+                    <>
+                      <p className="help" style={{ fontSize: 12 }}>
+                        {t("apiKeyHint")}
+                      </p>
+                      <div style={{ background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.3)", borderRadius: 6, padding: "8px 12px", fontSize: 12, lineHeight: 1.6 }}>
+                        {t("apiKeyWarning")}
+                      </div>
+                      {apis.length === 0 ? (
+                        <p className="help" style={{ fontSize: 12, color: "var(--warning)" }}>
+                          {t("noApiConfigured")}
+                        </p>
+                      ) : (
+                        <div className="form-row" style={{ alignItems: "flex-start" }}>
+                          <div className="field" style={{ flex: 1 }}>
+                            <label>{t("apiLabel")}</label>
+                            <select
+                              value={selectedApiId}
+                              onChange={(e) => { setSelectedApiId(e.target.value); setApiKeyId(""); }}
+                              className="select"
+                              disabled={pending}
+                            >
+                              <option value="">{t("selectApiPlaceholder")}</option>
+                              {apis.map((a) => (
+                                <option key={a.id} value={a.id}>{a.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="field" style={{ flex: 1 }}>
+                            <label>{t("activeKeyLabel")}</label>
+                            <select
+                              value={apiKeyId}
+                              onChange={(e) => setApiKeyId(e.target.value)}
+                              className="select"
+                              disabled={pending || !selectedApiId || loadingKeys}
+                            >
+                              <option value="">
+                                {loadingKeys ? t("loadingKeys") : selectedApiId ? t("selectKeyPlaceholder") : t("selectApiFirst")}
+                              </option>
+                              {apiKeys.map((k) => (
+                                <option key={k.id} value={k.id}>{k.name} ({k.keyPrefix}…)</option>
+                              ))}
+                            </select>
+                            <p className="help" style={{ fontSize: 11, marginTop: 2 }}>
+                              {t("activeKeyNote")}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {error && <p className="error-text">{error}</p>}
+
+              <div className="flex items-center gap-2">
+                <button type="submit" disabled={pending} className="btn btn-primary btn-sm">
+                  {pending ? t("savingBtn") : t("saveBtn")}
+                </button>
+                <button type="button" onClick={onClose} className="btn btn-ghost btn-sm" disabled={pending}>
+                  {t("cancelBtn")}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

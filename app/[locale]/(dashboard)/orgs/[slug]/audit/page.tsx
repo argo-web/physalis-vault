@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { getTranslations } from "next-intl/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isPlatformAdmin } from "@/lib/roles";
@@ -10,6 +11,7 @@ export default async function OrgAuditPage({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations("orgs.audit");
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -42,10 +44,7 @@ export default async function OrgAuditPage({
           <div>
             <h1 className="page-title">Audit log</h1>
             <div className="page-subtitle">
-              {isAdminLevel
-                ? "Historique de toutes les actions sensibles de l'organisation."
-                : "Vos actions sur les projets auxquels vous avez accès."}
-              {" "}Cliquez sur une ligne pour voir les détails (metadata).
+              {isAdminLevel ? t("adminDesc") : t("memberDesc")}
             </div>
           </div>
         </div>

@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isPlatformAdmin } from "@/lib/roles";
+import { isPlatformAdmin, hasDevPrivileges } from "@/lib/roles";
+import { getTranslations } from "next-intl/server";
 import ProjectView from "./project-view";
 
 export default async function ProjectPage({
@@ -10,6 +11,7 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations("projects");
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -30,6 +32,7 @@ export default async function ProjectPage({
         select: {
           id: true,
           slug: true,
+          rotationFeatureEnabled: true,
           members: { where: { userId: session.user.id } },
         },
       },
@@ -66,7 +69,7 @@ export default async function ProjectPage({
   } else if (projectMember) {
     if (projectMember.hidden) notFound();
     role = projectMember.role;
-  } else if (orgRole === "DEV") {
+  } else if (hasDevPrivileges(orgRole)) {
     role = "EDITOR";
   }
   // MEMBER sans ProjectMember explicite → role reste null → notFound.
@@ -101,7 +104,7 @@ export default async function ProjectPage({
                 href={`/projects/${project.slug}/audit`}
                 className="btn btn-ghost btn-sm"
               >
-                Audit
+                {t("auditLink")}
               </Link>
             </div>
           )}

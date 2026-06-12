@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { OrgRole } from "@prisma/client";
 import RoleInfoDialog from "./role-info-dialog";
 
@@ -35,7 +36,12 @@ const ORG_ROLE_RANK: Record<OrgRole, number> = {
   OWNER: 5,
 };
 
-const ROLES: OrgRole[] = ["MEMBER", "DEV", "ADMIN", "OWNER"];
+const ROLES: OrgRole[] = ["MEMBER", "DEV", "ADMIN_DEV", "ADMIN", "OWNER"];
+
+/** Libellé affiché d'un rôle (les enums sont bruts sauf ADMIN_DEV → "AdminDev"). */
+function roleLabel(r: OrgRole): string {
+  return r === "ADMIN_DEV" ? "AdminDev" : r;
+}
 
 function initials(email: string): string {
   const local = email.split("@")[0] || email;
@@ -49,6 +55,7 @@ export default function OrgMembersPanel({
   slug: string;
   role: OrgRole;
 }) {
+  const t = useTranslations("orgs.members");
   const canManage = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.ADMIN;
   const isOwner = role === "OWNER";
 
@@ -73,7 +80,7 @@ export default function OrgMembersPanel({
     setError(null);
     const res = await fetch(`/api/orgs/${slug}/members`);
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as {
@@ -150,12 +157,7 @@ export default function OrgMembersPanel({
   }
 
   async function remove(userId: string, email: string) {
-    if (
-      !confirm(
-        `Retirer ${email} de l'organisation ?\n\nLes machine tokens créés par ce membre seront révoqués.`,
-      )
-    )
-      return;
+    if (!confirm(t("removeConfirm", { email }))) return;
     const res = await fetch(`/api/orgs/${slug}/members/${userId}`, {
       method: "DELETE",
     });
@@ -163,7 +165,7 @@ export default function OrgMembersPanel({
       const data = (await res.json().catch(() => null)) as
         | { error?: string }
         | null;
-      setError(data?.error ?? "Suppression impossible.");
+      setError(data?.error ?? t("removeError"));
       return;
     }
     reload();
@@ -200,7 +202,7 @@ export default function OrgMembersPanel({
   }
 
   function deleteInvitation(invitationId: string, email: string) {
-    if (!confirm(`Supprimer l'invitation envoyée à ${email} ?`)) return;
+    if (!confirm(t("deleteConfirm", { email }))) return;
     setError(null);
     startTransition(async () => {
       const res = await fetch(
@@ -211,7 +213,7 @@ export default function OrgMembersPanel({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Suppression impossible.");
+        setError(data?.error ?? t("deleteError"));
         return;
       }
       reload();
@@ -238,23 +240,20 @@ export default function OrgMembersPanel({
       >
         <span style={{ fontSize: 18 }}>ℹ️</span>
         <span style={{ flex: 1, fontSize: 13 }}>
-          <strong>En savoir plus sur les types de membres</strong>
-          <span className="help" style={{ display: "block", fontSize: 12 }}>
-            Détails des droits pour Owner, Admin, Dev et Member.
-          </span>
+          <strong>{t("infoBtn")}</strong>
         </span>
         <span className="help" style={{ fontSize: 12 }}>→</span>
       </button>
       <section>
         <div className="section-header">
-          <h2 className="section-title">Membres</h2>
+          <h2 className="section-title">{t("title")}</h2>
           {canManage && !inviting && (
             <button
               type="button"
               onClick={() => setInviting(true)}
               className="btn btn-primary btn-sm"
             >
-              + Inviter
+              {t("inviteBtn")}
             </button>
           )}
         </div>
@@ -264,13 +263,13 @@ export default function OrgMembersPanel({
             {/* Section : invitation in-app via candidat existant */}
             {candidates && candidates.length > 0 && (
               <div className="field" style={{ marginBottom: 12 }}>
-                <label>Membre déjà sur Physalis</label>
+                <label>{t("existingLabel")}</label>
                 <select
                   value={candidateUserId}
                   onChange={(e) => setCandidateUserId(e.target.value)}
                   className="select"
                 >
-                  <option value="">— Aucun (utiliser l&apos;email) —</option>
+                  <option value="">{t("addTitle")}</option>
                   {candidates.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.email} —{" "}
@@ -279,16 +278,14 @@ export default function OrgMembersPanel({
                   ))}
                 </select>
                 <div className="help" style={{ marginTop: 4 }}>
-                  Liste des users que tu connais via tes autres organisations.
-                  Pas d&apos;email envoyé : l&apos;invitation apparaîtra sur
-                  leur dashboard.
+                  {t("inviteInAppNote")}
                 </div>
               </div>
             )}
 
             <div className="form-row">
               <div className="field" style={{ minWidth: 240 }}>
-                <label>Email {candidateUserId && "(ignoré)"}</label>
+                <label>{t("emailLabel")}</label>
                 <input
                   type="email"
                   required={!candidateUserId}
@@ -301,7 +298,7 @@ export default function OrgMembersPanel({
                 />
               </div>
               <div className="field" style={{ maxWidth: 160 }}>
-                <label>Rôle</label>
+                <label>{t("roleLabel")}</label>
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value as OrgRole)}
@@ -309,7 +306,7 @@ export default function OrgMembersPanel({
                 >
                   {ROLES.filter((r) => r !== "OWNER" || isOwner).map((r) => (
                     <option key={r} value={r}>
-                      {r}
+                      {roleLabel(r)}
                     </option>
                   ))}
                 </select>
@@ -322,8 +319,8 @@ export default function OrgMembersPanel({
             )}
             <p className="help" style={{ marginTop: 10 }}>
               {candidateUserId
-                ? "L'invitation sera visible immédiatement sur le dashboard du destinataire (TTL 48 h)."
-                : "Un email avec un lien d'acceptation valable 48 h sera envoyé."}
+                ? t("inviteInAppNote")
+                : t("inviteEmailNote")}
             </p>
             <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
               <button
@@ -337,8 +334,8 @@ export default function OrgMembersPanel({
                 {pending
                   ? "Envoi..."
                   : candidateUserId
-                    ? "Envoyer l'invitation in-app"
-                    : "Envoyer l'invitation par email"}
+                    ? t("inviteInAppBtn")
+                    : t("inviteEmailBtn")}
               </button>
               <button
                 type="button"
@@ -366,7 +363,7 @@ export default function OrgMembersPanel({
           <p className="help">Chargement…</p>
         ) : members.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-title">Aucun membre</div>
+            <div className="empty-state-title">{t("empty")}</div>
           </div>
         ) : (
           <div className="row-list">
@@ -377,7 +374,7 @@ export default function OrgMembersPanel({
                   <div className="row-name">{m.user.email}</div>
                   <div className="row-meta">
                     <span>
-                      Depuis {new Date(m.createdAt).toLocaleDateString()}
+                      {t("since", { date: new Date(m.createdAt).toLocaleDateString() })}
                     </span>
                   </div>
                 </div>
@@ -394,14 +391,14 @@ export default function OrgMembersPanel({
                       {ROLES.filter((r) => r !== "OWNER" || isOwner).map(
                         (r) => (
                           <option key={r} value={r}>
-                            {r}
+                            {roleLabel(r)}
                           </option>
                         ),
                       )}
                     </select>
                   ) : (
                     <span className={`role role-${m.role.toLowerCase()}`}>
-                      {m.role}
+                      {roleLabel(m.role)}
                     </span>
                   )}
                   {canManage && (
@@ -410,7 +407,7 @@ export default function OrgMembersPanel({
                       onClick={() => remove(m.user.id, m.user.email)}
                       className="btn btn-danger btn-xs"
                     >
-                      Retirer
+                      {t("removeBtn")}
                     </button>
                   )}
                 </div>
@@ -423,7 +420,7 @@ export default function OrgMembersPanel({
       {invitations !== null && invitations.length > 0 && (
         <section className="section">
           <div className="section-header">
-            <h2 className="section-title">Invitations en attente</h2>
+            <h2 className="section-title">{t("pendingTitle")}</h2>
           </div>
           <div className="row-list">
             {invitations.map((inv) => {
@@ -440,9 +437,8 @@ export default function OrgMembersPanel({
                         <span
                           className="chip"
                           style={{ marginLeft: 6, fontSize: 10 }}
-                          title="Invitation in-app (l'user verra sur son dashboard)"
                         >
-                          in-app
+                          {t("badgeInApp")}
                         </span>
                       )}
                       {expired && (
@@ -454,20 +450,19 @@ export default function OrgMembersPanel({
                             background: "var(--danger-bg)",
                             color: "var(--danger-fg)",
                           }}
-                          title="Le lien d'invitation a expiré — utilise « Renvoyer » pour en générer un nouveau"
+                          title={t("expiredNote")}
                         >
-                          expirée
+                          {t("badgeExpired")}
                         </span>
                       )}
                     </div>
                     <div className="row-meta">
                       <span className={`role role-${inv.role.toLowerCase()}`}>
-                        {inv.role}
+                        {roleLabel(inv.role)}
                       </span>
-                      <span>· invitée par {inv.invitedBy.email}</span>
+                      <span>· {t("invitedBy", { email: inv.invitedBy.email })}</span>
                       <span>
-                        · {expired ? "a expiré le" : "expire le"}{" "}
-                        {new Date(inv.expiresAt).toLocaleDateString()}
+                        · {new Date(inv.expiresAt).toLocaleDateString()}
                       </span>
                     </div>
                   </div>
@@ -494,15 +489,15 @@ export default function OrgMembersPanel({
                             }
                             title={
                               inv.inviteeUserId
-                                ? "Régénère le lien et prolonge l'expiration (in-app, pas d'email)"
-                                : "Régénère le lien, prolonge l'expiration et renvoie l'email"
+                                ? t("resendNoteInApp")
+                                : t("resendNoteEmail")
                             }
                           >
                             {isSent
-                              ? "✓ Envoyé"
+                              ? t("resendSent")
                               : fb === "cooldown"
-                                ? "Envoyé"
-                                : "Renvoyer"}
+                                ? t("resendSent")
+                                : t("resendBtn")}
                           </button>
                         );
                       })()}
@@ -512,7 +507,7 @@ export default function OrgMembersPanel({
                         disabled={pending}
                         className="btn btn-danger btn-xs"
                       >
-                        Supprimer
+                        {t("deleteBtn")}
                       </button>
                     </div>
                   )}

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { defaultDeployPath } from "@/lib/validation";
 
 type EnvSummary = {
@@ -37,6 +38,7 @@ export default function SettingsDialog({
   environments: EnvSummary[];
   onClose: () => void;
 }) {
+  const t = useTranslations("projects.settings");
   const [servers, setServers] = useState<ServerOption[] | null>(null);
   const [serversError, setServersError] = useState<string | null>(null);
 
@@ -48,7 +50,7 @@ export default function SettingsDialog({
       if (!res.ok) {
         setServers([]);
         if (res.status !== 403) {
-          setServersError("Impossible de charger la liste des serveurs.");
+          setServersError(t("saveError"));
         }
         return;
       }
@@ -64,7 +66,7 @@ export default function SettingsDialog({
     <div className="dialog-overlay">
       <div className="dialog dialog-lg">
         <div className="dialog-header">
-          <h2 className="dialog-title">Paramètres du projet</h2>
+          <h2 className="dialog-title">{t("title")}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -103,6 +105,7 @@ function GithubSection({
   initialRepo: string | null;
   initialWorkflow: string | null;
 }) {
+  const t = useTranslations("projects.settings");
   const router = useRouter();
   const [repo, setRepo] = useState(initialRepo ?? "");
   const [workflow, setWorkflow] = useState(initialWorkflow ?? "");
@@ -132,7 +135,7 @@ function GithubSection({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Modification impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       router.refresh();
@@ -142,38 +145,28 @@ function GithubSection({
   return (
     <section>
       <h3 className="section-title" style={{ fontSize: 14, marginBottom: 8 }}>
-        GitHub Actions (Redeploy)
+        {t("githubSection")}
       </h3>
       <form onSubmit={save} className="flex flex-col gap-2">
         <div className="field">
-          <label>
-            Repo GitHub (format <code className="code-mono">owner/repo</code>)
-          </label>
+          <label>{t("githubRepoLabel")}</label>
           <input
             value={repo}
             onChange={(e) => setRepo(e.target.value)}
-            placeholder="argo-web/voyages"
+            placeholder={t("githubRepoPlaceholder")}
             className="input input-mono"
           />
         </div>
         <div className="field">
-          <label>
-            Workflow file (défaut{" "}
-            <code className="code-mono">redeploy.yml</code>)
-          </label>
+          <label>{t("githubWorkflowLabel")}</label>
           <input
             value={workflow}
             onChange={(e) => setWorkflow(e.target.value)}
-            placeholder="redeploy.yml"
+            placeholder={t("githubWorkflowPlaceholder")}
             className="input input-mono"
           />
         </div>
-        <p className="help">
-          Le bouton Redeploy déclenche un{" "}
-          <code className="code-mono">workflow_dispatch</code> sur ce workflow.
-          Le PAT GitHub doit être stocké dans le secret org{" "}
-          <code className="code-mono">GITHUB_DISPATCH_TOKEN</code>.
-        </p>
+        <p className="help">{t("githubNote")}</p>
         {error && <p className="error-text">{error}</p>}
         <div>
           <button
@@ -181,7 +174,7 @@ function GithubSection({
             disabled={!dirty || pending}
             className="btn btn-primary btn-sm"
           >
-            {pending ? "..." : "Enregistrer"}
+            {pending ? "..." : t("saveBtn")}
           </button>
         </div>
       </form>
@@ -196,6 +189,7 @@ function ProjectNameSection({
   slug: string;
   initialName: string;
 }) {
+  const t = useTranslations("projects.settings");
   const router = useRouter();
   const [name, setName] = useState(initialName);
   const [slugInput, setSlugInput] = useState(slug);
@@ -211,13 +205,7 @@ function ProjectNameSection({
     e.preventDefault();
     setError(null);
     if (slugChanged) {
-      const ok = confirm(
-        `⚠ Vous changez le slug du projet de "${slug}" à "${trimmedSlug}".\n\n` +
-          `Conséquences :\n` +
-          `• Les scripts utilisant l'URL Bearer machine \n  /api/secrets/${slug}/<env>\n  retourneront 403 jusqu'à ce qu'ils soient mis à jour avec le nouveau slug.\n` +
-          `• Les bookmarks /projects/${slug} ne fonctionnent plus.\n\n` +
-          `Pas besoin de regénérer les machine tokens (ils restent valides) ni de toucher au PAT GitHub. Continuer ?`,
-      );
+      const ok = confirm(t("slugChangeConfirm", { old: slug, new: trimmedSlug }));
       if (!ok) return;
     }
     startTransition(async () => {
@@ -233,7 +221,7 @@ function ProjectNameSection({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Modification impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       if (slugChanged) {
@@ -247,12 +235,12 @@ function ProjectNameSection({
   return (
     <section>
       <h3 className="section-title" style={{ fontSize: 14, marginBottom: 8 }}>
-        Identité du projet
+        {t("identitySection")}
       </h3>
       <form onSubmit={save} className="flex flex-col gap-2">
         <div className="form-row">
           <div className="field">
-            <label>Nom</label>
+            <label>{t("nameLabel")}</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -261,7 +249,7 @@ function ProjectNameSection({
             />
           </div>
           <div className="field">
-            <label>Slug (URL et endpoint Bearer machine)</label>
+            <label>{t("slugLabel")}</label>
             <input
               value={slugInput}
               onChange={(e) =>
@@ -274,9 +262,7 @@ function ProjectNameSection({
         </div>
         {slugChanged && (
           <p className="help text-accent">
-            ⚠ Changer le slug casse les scripts qui hardcodent l&apos;URL{" "}
-            <code className="code-mono">/api/secrets/{slug}/&lt;env&gt;</code>.
-            Le token machine reste valide, seul l&apos;URL change.
+            {t("slugWarning")}
           </p>
         )}
         {error && <p className="error-text">{error}</p>}
@@ -286,7 +272,7 @@ function ProjectNameSection({
             disabled={!dirty || pending}
             className="btn btn-primary btn-sm"
           >
-            {pending ? "..." : "Enregistrer"}
+            {pending ? "..." : t("saveBtn")}
           </button>
         </div>
       </form>
@@ -305,6 +291,7 @@ function EnvironmentsSection({
   servers: ServerOption[] | null;
   serversError: string | null;
 }) {
+  const t = useTranslations("projects.settings");
   const router = useRouter();
   const [adding, setAdding] = useState(false);
 
@@ -312,7 +299,7 @@ function EnvironmentsSection({
     <section>
       <div className="section-header">
         <h3 className="section-title" style={{ fontSize: 14 }}>
-          Environnements
+          {t("envsSection")}
         </h3>
         {!adding && (
           <button
@@ -320,7 +307,7 @@ function EnvironmentsSection({
             onClick={() => setAdding(true)}
             className="btn btn-ghost btn-xs"
           >
-            + Ajouter
+            {t("addEnvBtn")}
           </button>
         )}
       </div>
@@ -371,6 +358,7 @@ function AddEnvForm({
   onCancel: () => void;
   onCreated: () => void;
 }) {
+  const t = useTranslations("projects.settings");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [serverId, setServerId] = useState("");
@@ -396,7 +384,7 @@ function AddEnvForm({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Création impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       onCreated();
@@ -404,33 +392,33 @@ function AddEnvForm({
   }
 
   const previewName = name.trim() || "<env>";
-  const deployPathPlaceholder = `${defaultDeployPath(previewName, slug)} (défaut)`;
+  const deployPathPlaceholder = `${defaultDeployPath(previewName, slug)}${t("envDeployPathDefaultSuffix")}`;
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-2">
       <div className="form-row">
         <div className="field">
-          <label>Nom</label>
+          <label>{t("envNameLabel")}</label>
           <input
             required
             value={name}
             onChange={(e) => setName(e.target.value.toLowerCase())}
-            placeholder="qa"
+            placeholder={t("envNamePlaceholder")}
             className="input input-mono"
           />
         </div>
         <div className="field" style={{ flex: 2 }}>
-          <label>URL</label>
+          <label>{t("envUrlLabel")}</label>
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://qa.example.com (optionnel)"
+            placeholder={t("envUrlPlaceholder")}
             className="input"
           />
         </div>
       </div>
       <div className="field">
-        <label>Deploy path</label>
+        <label>{t("envDeployPathLabel")}</label>
         <input
           value={deployPath}
           onChange={(e) => setDeployPath(e.target.value)}
@@ -439,7 +427,7 @@ function AddEnvForm({
         />
       </div>
       <div className="field">
-        <label>Serveur</label>
+        <label>{t("envServerLabel")}</label>
         <ServerSelect
           servers={servers}
           value={serverId}
@@ -453,14 +441,14 @@ function AddEnvForm({
           disabled={pending || !name.trim()}
           className="btn btn-primary btn-sm"
         >
-          {pending ? "..." : "Créer"}
+          {pending ? "..." : t("saveBtn")}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="btn btn-ghost btn-sm"
         >
-          Annuler
+          {t("cancelBtn")}
         </button>
       </div>
     </form>
@@ -476,13 +464,14 @@ function ServerSelect({
   value: string;
   onChange: (id: string) => void;
 }) {
+  const t = useTranslations("projects.settings");
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="select"
     >
-      <option value="">— Aucun serveur —</option>
+      <option value="">{t("envServerNone")}</option>
       {servers?.map((s) => (
         <option key={s.id} value={s.id}>
           {s.name} ({s.sshUser}@{s.ip})
@@ -503,6 +492,7 @@ function EnvRow({
   servers: ServerOption[] | null;
   onChanged: () => void;
 }) {
+  const t = useTranslations("projects.settings");
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(env.name);
   const [url, setUrl] = useState(env.url ?? "");
@@ -546,7 +536,7 @@ function EnvRow({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Modification impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       setEditing(false);
@@ -556,9 +546,7 @@ function EnvRow({
 
   function remove() {
     if (
-      !confirm(
-        `Supprimer l'environnement "${env.name}" ?\n\nCela supprimera ${env.secretCount} secret(s) et tous les machine tokens de cet environnement (cascade).`,
-      )
+      !confirm(t("envDeleteConfirm", { name: env.name, count: env.secretCount }))
     )
       return;
     startTransition(async () => {
@@ -570,7 +558,7 @@ function EnvRow({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Suppression impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       onChanged();
@@ -620,7 +608,7 @@ function EnvRow({
             disabled={pending}
             className="btn btn-danger btn-xs"
           >
-            Supprimer
+            {t("envDeleteBtn")}
           </button>
         </div>
       </div>
@@ -628,14 +616,14 @@ function EnvRow({
   }
 
   const previewName = name.trim() || "<env>";
-  const deployPathPlaceholder = `${defaultDeployPath(previewName, slug)} (défaut)`;
+  const deployPathPlaceholder = `${defaultDeployPath(previewName, slug)}${t("envDeployPathDefaultSuffix")}`;
 
   return (
     <div className="card">
       <form onSubmit={save} className="flex flex-col gap-2">
         <div className="form-row">
           <div className="field">
-            <label>Nom</label>
+            <label>{t("envNameLabel")}</label>
             <input
               required
               value={name}
@@ -644,17 +632,17 @@ function EnvRow({
             />
           </div>
           <div className="field" style={{ flex: 2 }}>
-            <label>URL</label>
+            <label>{t("envUrlLabel")}</label>
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="URL (optionnel)"
+              placeholder={t("envUrlPlaceholder")}
               className="input"
             />
           </div>
         </div>
         <div className="field">
-          <label>Deploy path</label>
+          <label>{t("envDeployPathLabel")}</label>
           <input
             value={deployPath}
             onChange={(e) => setDeployPath(e.target.value)}
@@ -663,7 +651,7 @@ function EnvRow({
           />
         </div>
         <div className="field">
-          <label>Serveur</label>
+          <label>{t("envServerLabel")}</label>
           <ServerSelect
             servers={servers}
             value={serverId}
@@ -672,8 +660,7 @@ function EnvRow({
         </div>
         {name !== env.name && (
           <p className="help text-accent">
-            ⚠ Renommer l&apos;env casse les scripts de deploy qui pointent sur
-            l&apos;ancien nom (URL Bearer machine token).
+            {t("slugWarning")}
           </p>
         )}
         {error && <p className="error-text">{error}</p>}
@@ -683,7 +670,7 @@ function EnvRow({
             disabled={pending || !dirty}
             className="btn btn-primary btn-sm"
           >
-            {pending ? "..." : "Enregistrer"}
+            {pending ? "..." : t("saveBtn")}
           </button>
           <button
             type="button"
@@ -697,7 +684,7 @@ function EnvRow({
             }}
             className="btn btn-ghost btn-sm"
           >
-            Annuler
+            {t("cancelBtn")}
           </button>
         </div>
       </form>

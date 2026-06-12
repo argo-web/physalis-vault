@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { ProjectRole } from "@prisma/client";
 
 const ROLE_RANK: Record<ProjectRole, number> = {
@@ -18,6 +19,7 @@ export default function ComposePanel({
   env: string;
   role: ProjectRole;
 }) {
+  const t = useTranslations("projects.compose");
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.EDITOR;
 
   const [content, setContent] = useState<string>("");
@@ -86,11 +88,11 @@ export default function ComposePanel({
     <div className="flex flex-col gap-3">
       <div className="section-header">
         <h2 className="section-title">
-          docker-compose — <span className="code-mono">{env}</span>
+          {t("title", { env })}
         </h2>
         {savedAt && !dirty && (
           <span className="help">
-            Enregistré · {savedAt.toLocaleTimeString()}
+            {t("saved", { time: savedAt.toLocaleTimeString() })}
           </span>
         )}
       </div>
@@ -103,11 +105,7 @@ export default function ComposePanel({
           onChange={(e) => setContent(e.target.value)}
           readOnly={!canEdit}
           spellCheck={false}
-          placeholder={
-            canEdit
-              ? "# Collez votre docker-compose.yml ici\nservices:\n  app:\n    image: ..."
-              : "(vide)"
-          }
+          placeholder={canEdit ? t("placeholder") : t("hint")}
           className="textarea textarea-mono"
           style={{ minHeight: 400, background: "var(--code-bg)" }}
         />
@@ -123,7 +121,7 @@ export default function ComposePanel({
             disabled={!dirty || saving}
             className="btn btn-primary btn-sm"
           >
-            {saving ? "Enregistrement..." : "Enregistrer"}
+            {saving ? t("saving") : t("saveBtn")}
           </button>
           {dirty && (
             <button
@@ -131,18 +129,13 @@ export default function ComposePanel({
               onClick={reset}
               className="btn btn-ghost btn-sm"
             >
-              Annuler
+              {t("cancelBtn")}
             </button>
           )}
         </div>
       )}
 
-      <p className="help">
-        Le contenu est stocké en clair (PostgreSQL). Évitez d&apos;y mettre des
-        valeurs sensibles en dur — utilisez{" "}
-        <code className="code-mono">${"${VAR}"}</code> et placez les valeurs
-        dans l&apos;onglet <strong>Secrets</strong>.
-      </p>
+      <p className="help">{t("hint")}</p>
     </div>
   );
 }

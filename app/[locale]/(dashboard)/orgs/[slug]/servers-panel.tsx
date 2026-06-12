@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { OrgRole } from "@prisma/client";
 import { RiServerLine } from "@remixicon/react";
 
@@ -29,6 +30,7 @@ export default function ServersPanel({
   slug: string;
   role: OrgRole;
 }) {
+  const t = useTranslations("orgs.servers");
   const [servers, setServers] = useState<ServerListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -36,7 +38,7 @@ export default function ServersPanel({
 
   // DEV+ peut lire la liste/détails. ADMIN+ peut créer/modifier/supprimer.
   const canRead = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.DEV;
-  const canManage = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.ADMIN;
+  const canManage = ORG_ROLE_RANK[role] >= ORG_ROLE_RANK.ADMIN_DEV;
 
   const reload = useCallback(async () => {
     if (!canRead) {
@@ -46,7 +48,7 @@ export default function ServersPanel({
     setError(null);
     const res = await fetch(`/api/orgs/${slug}/servers`);
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as { servers: ServerListItem[] };
@@ -61,16 +63,12 @@ export default function ServersPanel({
   }, [reload]);
 
   async function remove(server: ServerListItem) {
-    const detail =
-      server.environmentCount > 0
-        ? `\n\n⚠ ${server.environmentCount} environnement(s) y sont actuellement liés. Ils seront détachés (deploy bloqué tant qu'aucun nouveau serveur n'est assigné).`
-        : "";
-    if (!confirm(`Supprimer le serveur "${server.name}" ?${detail}`)) return;
+    if (!confirm(t("deleteConfirm", { name: server.name }))) return;
     const res = await fetch(`/api/orgs/${slug}/servers/${server.id}`, {
       method: "DELETE",
     });
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteError"));
       return;
     }
     reload();
@@ -78,7 +76,7 @@ export default function ServersPanel({
 
   if (!canRead) {
     return (
-      <p className="help">Réservé aux DEV/ADMIN/OWNER de l&apos;organisation.</p>
+      <p className="help">{t("readOnly")}</p>
     );
   }
 
@@ -86,12 +84,9 @@ export default function ServersPanel({
     <div className="flex flex-col gap-4">
       <div className="section-header">
         <div>
-          <h2 className="section-title">Serveurs</h2>
+          <h2 className="section-title">{t("panelTitle")}</h2>
           <p className="help" style={{ marginTop: 4 }}>
-            VPS cibles pour les déploiements OIDC. Une clé SSH privée par
-            serveur — la clé est <strong>chiffrée au repos</strong> et n&apos;est{" "}
-            <strong>jamais relue</strong> après création (rotation = nouveau
-            serveur).
+            {t("panelDesc")}
           </p>
         </div>
         {!adding && canManage && (
@@ -100,7 +95,7 @@ export default function ServersPanel({
             onClick={() => setAdding(true)}
             className="btn btn-primary btn-sm"
           >
-            + Ajouter
+            {t("createBtn")}
           </button>
         )}
       </div>
@@ -121,10 +116,10 @@ export default function ServersPanel({
       {error && <p className="error-text">{error}</p>}
 
       {servers === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : servers.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-title">Aucun serveur configuré</div>
+          <div className="empty-state-title">{t("emptyTitle")}</div>
         </div>
       ) : (
         <div className="row-list">
@@ -151,9 +146,7 @@ export default function ServersPanel({
                       {s.sshUser}@{s.ip}
                     </span>
                     <span>
-                      · {s.environmentCount} environnement
-                      {s.environmentCount === 1 ? "" : "s"} lié
-                      {s.environmentCount === 1 ? "" : "s"}
+                      · {t("envLinked", { count: s.environmentCount })}
                     </span>
                   </div>
                 </div>
@@ -164,14 +157,14 @@ export default function ServersPanel({
                       onClick={() => setEditId(s.id)}
                       className="btn btn-ghost btn-xs"
                     >
-                      Modifier
+                      {t("editBtn")}
                     </button>
                     <button
                       type="button"
                       onClick={() => remove(s)}
                       className="btn btn-danger btn-xs"
                     >
-                      Supprimer
+                      {t("deleteBtn")}
                     </button>
                   </div>
                 )}
@@ -193,6 +186,7 @@ function ServerForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const t = useTranslations("orgs.servers");
   const [name, setName] = useState("");
   const [ip, setIp] = useState("");
   const [sshUser, setSshUser] = useState("github-deploy");
@@ -213,7 +207,7 @@ function ServerForm({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Création impossible.");
+        setError(data?.error ?? t("createError"));
         return;
       }
       onSaved();
@@ -224,7 +218,7 @@ function ServerForm({
     <form onSubmit={onSubmit} className="flex flex-col gap-3">
       <div className="form-row">
         <div className="field">
-          <label>Nom</label>
+          <label>{t("nameLabel")}</label>
           <input
             required
             value={name}
@@ -234,7 +228,7 @@ function ServerForm({
           />
         </div>
         <div className="field">
-          <label>IP / hostname</label>
+          <label>{t("ipLabel")}</label>
           <input
             required
             value={ip}
@@ -244,7 +238,7 @@ function ServerForm({
           />
         </div>
         <div className="field">
-          <label>Utilisateur SSH</label>
+          <label>{t("sshUserLabel")}</label>
           <input
             required
             value={sshUser}
@@ -256,7 +250,7 @@ function ServerForm({
       </div>
       <div className="field">
         <label>
-          Clé SSH privée (PEM/OpenSSH, collée en clair, sera chiffrée AES-256-GCM)
+          {t("sshKeyLabel")}
         </label>
         <textarea
           required
@@ -269,11 +263,7 @@ function ServerForm({
           className="textarea textarea-mono"
         />
       </div>
-      <p className="help text-accent">
-        ⚠ La clé ne sera <strong>jamais relisible</strong> dans l&apos;UI après
-        création. Conservez-la dans votre gestionnaire local le temps de valider
-        que le déploiement fonctionne, puis supprimez-la.
-      </p>
+      <p className="help text-accent">{t("sshKeyWarning")}</p>
       {error && <p className="error-text">{error}</p>}
       <div className="flex items-center gap-2">
         <button
@@ -281,14 +271,14 @@ function ServerForm({
           disabled={pending}
           className="btn btn-primary btn-sm"
         >
-          {pending ? "Création…" : "Créer"}
+          {pending ? t("creatingBtn") : t("createBtn")}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="btn btn-ghost btn-sm"
         >
-          Annuler
+          {t("cancelBtn")}
         </button>
       </div>
     </form>
@@ -306,6 +296,7 @@ function ServerEditForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const t = useTranslations("orgs.servers");
   const [name, setName] = useState(server.name);
   const [ip, setIp] = useState(server.ip);
   const [sshUser, setSshUser] = useState(server.sshUser);
@@ -328,7 +319,7 @@ function ServerEditForm({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Modification impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       onSaved();
@@ -339,7 +330,7 @@ function ServerEditForm({
     <form onSubmit={onSubmit} className="flex flex-col gap-2">
       <div className="form-row">
         <div className="field">
-          <label>Nom</label>
+          <label>{t("nameLabel")}</label>
           <input
             required
             value={name}
@@ -348,7 +339,7 @@ function ServerEditForm({
           />
         </div>
         <div className="field">
-          <label>IP / hostname</label>
+          <label>{t("ipLabel")}</label>
           <input
             required
             value={ip}
@@ -357,7 +348,7 @@ function ServerEditForm({
           />
         </div>
         <div className="field">
-          <label>Utilisateur SSH</label>
+          <label>{t("sshUserLabel")}</label>
           <input
             required
             value={sshUser}
@@ -366,9 +357,7 @@ function ServerEditForm({
           />
         </div>
       </div>
-      <p className="help">
-        Pour faire pivoter la clé SSH : supprimer puis recréer le serveur.
-      </p>
+      <p className="help">{t("rotationNote")}</p>
       {error && <p className="error-text">{error}</p>}
       <div className="flex items-center gap-2">
         <button
@@ -376,14 +365,14 @@ function ServerEditForm({
           disabled={pending || !dirty}
           className="btn btn-primary btn-sm"
         >
-          {pending ? "Enregistrement…" : "Enregistrer"}
+          {pending ? t("savingBtn") : t("saveBtn")}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="btn btn-ghost btn-sm"
         >
-          Annuler
+          {t("cancelBtn")}
         </button>
       </div>
     </form>

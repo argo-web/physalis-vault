@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { ProjectRole } from "@prisma/client";
 import { RiShieldKeyholeLine } from "@remixicon/react";
 
@@ -28,6 +29,7 @@ export default function TokensPanel({
   env: string;
   role: ProjectRole;
 }) {
+  const t = useTranslations("projects.tokens");
   const [tokens, setTokens] = useState<TokenItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -71,7 +73,7 @@ export default function TokensPanel({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Création impossible.");
+        setError(data?.error ?? t("createError"));
         return;
       }
       const data = (await res.json()) as { token: string };
@@ -83,10 +85,10 @@ export default function TokensPanel({
   }
 
   async function revoke(id: string) {
-    if (!confirm("Révoquer ce token ?")) return;
+    if (!confirm(t("revokeConfirm"))) return;
     const res = await fetch(`/api/tokens/${id}`, { method: "DELETE" });
     if (!res.ok) {
-      setError("Révocation impossible.");
+      setError(t("revokeError"));
       return;
     }
     reload();
@@ -106,7 +108,7 @@ export default function TokensPanel({
     <div className="flex flex-col gap-4">
       <div className="section-header">
         <h2 className="section-title">
-          Machine tokens — <span className="code-mono">{env}</span>
+          {t("title", { env })}
         </h2>
         {canEdit && !creating && !issuedToken && (
           <button
@@ -114,7 +116,7 @@ export default function TokensPanel({
             onClick={() => setCreating(true)}
             className="btn btn-primary btn-sm"
           >
-            + Nouveau token
+            {t("createBtn")}
           </button>
         )}
       </div>
@@ -128,7 +130,7 @@ export default function TokensPanel({
           }}
         >
           <p className="settings-section-title">
-            Ce token ne sera affiché qu’une seule fois. Copiez-le maintenant.
+            {t("saveMsg")}
           </p>
           <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
             <code
@@ -150,7 +152,7 @@ export default function TokensPanel({
               onClick={() => copy(issuedToken)}
               className="btn btn-primary btn-sm"
             >
-              {copied ? "Copié !" : "Copier"}
+              {copied ? t("copiedBtn") : t("copyBtn")}
             </button>
           </div>
           <button
@@ -159,7 +161,7 @@ export default function TokensPanel({
             className="btn btn-ghost btn-xs"
             style={{ marginTop: 10 }}
           >
-            J’ai sauvegardé le token
+            {t("savedBtn")}
           </button>
         </div>
       )}
@@ -168,13 +170,13 @@ export default function TokensPanel({
         <div className="create-card">
           <form onSubmit={onCreate}>
             <div className="field">
-              <label>Nom du token</label>
+              <label>{t("nameLabel")}</label>
               <input
                 required
                 autoFocus
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder={`VPS Ginko — ${env}`}
+                placeholder={t("namePlaceholder", { env })}
                 className="input"
               />
             </div>
@@ -192,7 +194,7 @@ export default function TokensPanel({
                 disabled={pending || name.trim().length === 0}
                 className="btn btn-primary btn-sm"
               >
-                {pending ? "Création..." : "Créer"}
+                {t("submitBtn")}
               </button>
               <button
                 type="button"
@@ -217,40 +219,40 @@ export default function TokensPanel({
       ) : tokens.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-title">
-            Aucun token pour cet environnement
+            {t("empty")}
           </div>
         </div>
       ) : (
         <div className="row-list">
-          {tokens.map((t) => (
-            <div key={t.id} className="row">
+          {tokens.map((tok) => (
+            <div key={tok.id} className="row">
               <div className="row-icon"><RiShieldKeyholeLine size={18} aria-hidden /></div>
               <div className="row-info">
                 <div className="row-name">
-                  {t.name}{" "}
-                  {t.revokedAt && (
+                  {tok.name}{" "}
+                  {tok.revokedAt && (
                     <span className="badge danger" style={{ marginLeft: 6 }}>
-                      révoqué
+                      {t("status.revoked")}
                     </span>
                   )}
                 </div>
                 <div className="row-meta">
-                  <span>Créé le {new Date(t.createdAt).toLocaleString()}</span>
+                  <span>{t("createdAt", { date: new Date(tok.createdAt).toLocaleString() })}</span>
                   <span>
-                    {t.lastUsedAt
-                      ? `· dernière utilisation : ${new Date(t.lastUsedAt).toLocaleString()}`
-                      : "· jamais utilisé"}
+                    {tok.lastUsedAt
+                      ? t("lastUsed", { date: new Date(tok.lastUsedAt).toLocaleString() })
+                      : t("neverUsed")}
                   </span>
                 </div>
               </div>
               <div className="row-actions">
-                {canEdit && !t.revokedAt && (
+                {canEdit && !tok.revokedAt && (
                   <button
                     type="button"
-                    onClick={() => revoke(t.id)}
+                    onClick={() => revoke(tok.id)}
                     className="btn btn-danger btn-xs"
                   >
-                    Révoquer
+                    {t("revokeBtn")}
                   </button>
                 )}
               </div>

@@ -11,6 +11,7 @@
 // Toggle visibilite + select role appellent PATCH /api/projects/[slug]/members/[userId].
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { ProjectRole } from "@prisma/client";
 
 type MemberItem = {
@@ -31,6 +32,7 @@ function initials(email: string): string {
 }
 
 export default function MembersPanel({ slug }: { slug: string }) {
+  const t = useTranslations("projects.members");
   const [members, setMembers] = useState<MemberItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -78,15 +80,12 @@ export default function MembersPanel({ slug }: { slug: string }) {
     <div className="flex flex-col gap-4">
       <div className="section-header">
         <div>
-          <h2 className="section-title">Membres du projet</h2>
+          <h2 className="section-title">{t("title")}</h2>
           <p className="help" style={{ marginTop: 4 }}>
-            Tous les membres de l&apos;organisation voient ce projet par défaut
-            avec un rôle <strong>VIEWER</strong>. Tu peux masquer le projet
-            pour certains, ou élever leur rôle à EDITOR / OWNER.
+            {t("desc1")}
           </p>
           <p className="help" style={{ marginTop: 4 }}>
-            Les <strong>OWNER/ADMIN de l&apos;organisation</strong> ont
-            toujours OWNER implicite — non modifiable ici.
+            {t("desc2")}
           </p>
         </div>
       </div>
@@ -102,7 +101,7 @@ export default function MembersPanel({ slug }: { slug: string }) {
                   <span
                     className={`role role-${m.orgRole.toLowerCase()}`}
                     style={{ marginLeft: 6 }}
-                    title="Rôle dans l'organisation"
+                    title={t("orgRoleTitle")}
                   >
                     {m.orgRole}
                   </span>
@@ -110,15 +109,13 @@ export default function MembersPanel({ slug }: { slug: string }) {
               </div>
               <div className="row-meta">
                 {m.source === "org_admin" && (
-                  <span>
-                    OWNER implicite (admin de l&apos;org) · non modifiable
-                  </span>
+                  <span>{t("orgAdmin")}</span>
                 )}
                 {m.source === "explicit" && (
-                  <span>Rôle explicite — overide du défaut</span>
+                  <span>{t("explicit")}</span>
                 )}
                 {m.source === "default" && (
-                  <span>Rôle par défaut (VIEWER, accès en lecture)</span>
+                  <span>{t("default")}</span>
                 )}
               </div>
             </div>
@@ -147,13 +144,8 @@ export default function MembersPanel({ slug }: { slug: string }) {
                     disabled={pending}
                     onClick={() => update(m.userId, { hidden: !m.hidden })}
                     className={`btn btn-xs ${m.hidden ? "btn-danger" : "btn-ghost"}`}
-                    title={
-                      m.hidden
-                        ? "Le projet est masqué pour cet user — clic pour rendre visible"
-                        : "Le projet est visible pour cet user — clic pour masquer"
-                    }
                   >
-                    {m.hidden ? "🚫 Masqué" : "👁 Visible"}
+                    {m.hidden ? `🚫 ${t("hidden")}` : `👁 ${t("visible")}`}
                   </button>
                 </>
               ) : (
