@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+import type { useTranslations } from "next-intl";
 import {
   RiBuilding2Line,
   RiDoorOpenLine,
@@ -19,6 +21,8 @@ import {
   type RemixiconComponentType,
 } from "@remixicon/react";
 import { auth } from "@/lib/auth";
+
+type DashT = ReturnType<typeof useTranslations<"dashboard">>;
 import { prisma } from "@/lib/prisma";
 import { getCurrentOrgSlug } from "@/lib/api";
 import { isPlatformAdmin } from "@/lib/roles";
@@ -39,6 +43,7 @@ export default async function DashboardPage({
     activity_filter?: string;
   }>;
 }) {
+  const t = await getTranslations("dashboard");
   const sp = await searchParams;
   const activityFilter = isFilterId(sp.activity_filter)
     ? sp.activity_filter
@@ -227,14 +232,14 @@ export default async function DashboardPage({
         <PendingInvitations />
         <div className="page-header">
           <div>
-            <h1 className="page-title">Tableau de bord</h1>
+            <h1 className="page-title">{t("page.title")}</h1>
             <div className="page-subtitle">
-              Connecté en tant que <strong>{session.user.email}</strong> (
+              {t("page.connectedAs")} <strong>{session.user.email}</strong> (
               {session.user.role})
               {org ? (
                 <>
                   {" · "}
-                  Organisation :{" "}
+                  {t("page.organisation")}{" "}
                   <Link href={`/orgs/${org.slug}`} className="text-accent">
                     {org.name}
                   </Link>
@@ -247,8 +252,8 @@ export default async function DashboardPage({
         {!org && (
           <>
             <div className="empty-state">
-              <div className="empty-state-title">Aucune organisation</div>
-              <div>Créez-en une via le menu en haut à gauche.</div>
+              <div className="empty-state-title">{t("page.noOrg")}</div>
+              <div>{t("page.noOrgHelp")}</div>
             </div>
             <div className="flex gap-3 flex-wrap">
               <ExtensionInstallPrompt />
@@ -263,19 +268,19 @@ export default async function DashboardPage({
               style={{ marginBottom: 24 }}
             >
               <Link href="/projects" className="btn btn-primary">
-                Voir les projets
+                {t("page.btnProjects")}
               </Link>
               <Link href={`/orgs/${org.slug}`} className="btn btn-ghost">
-                Gérer l&apos;organisation
+                {t("page.btnManageOrg")}
               </Link>
               <Link href="/vault" className="btn btn-ghost">
-                <RiSafe2Line size={14} aria-hidden /> Coffre personnel
+                <RiSafe2Line size={14} aria-hidden /> {t("page.btnVault")}
               </Link>
               <ExtensionInstallPrompt />
             </div>
 
             {recentProjects.length > 0 && (
-              <RecentProjects items={recentProjects} />
+              <RecentProjects items={recentProjects} t={t} />
             )}
 
             <div
@@ -290,21 +295,21 @@ export default async function DashboardPage({
               <CountCard
                 primary={{
                   value: org._count.members,
-                  label: "Membres",
+                  label: t("countCard.members"),
                 }}
                 secondary={{
                   value: myOrgsCount,
-                  label: "Organisations",
+                  label: t("countCard.organisations"),
                 }}
               />
               <CountCard
                 primary={{
                   value: `${activeProjectCount} / ${projectCount}`,
-                  label: "Projets actifs",
+                  label: t("countCard.activeProjects"),
                 }}
                 secondary={{
                   value: secretCount,
-                  label: "Secrets",
+                  label: t("countCard.secrets"),
                 }}
               />
               {/* BillingCard supprimé en self-host (pas de plans payants). */}
@@ -318,6 +323,9 @@ export default async function DashboardPage({
               page={activityPage}
               totalPages={activityTotalPages}
               total={activityTotal}
+              t={t}
+              filterDefs={getFilterDefs(t)}
+              actionLabelsMap={getActionLabels(t)}
             />
           </>
         )}
@@ -383,11 +391,11 @@ type RecentProjectRow = {
   lastEnvName: string | null;
 };
 
-function RecentProjects({ items }: { items: RecentProjectRow[] }) {
+function RecentProjects({ items, t }: { items: RecentProjectRow[]; t: DashT }) {
   return (
     <section className="section">
       <div className="section-header">
-        <h2 className="section-title">Projets récents</h2>
+        <h2 className="section-title">{t("recentProjects")}</h2>
       </div>
       <div className="projects-grid" style={{ marginBottom: 24 }}>
         {items.map((p) => (
@@ -418,7 +426,7 @@ function RecentProjects({ items }: { items: RecentProjectRow[] }) {
                 whiteSpace: "nowrap",
               }}
             >
-              {relativeTime(p.lastDeployAt)}
+              {relativeTime(p.lastDeployAt, t)}
             </span>
             <div
               style={{
@@ -476,27 +484,32 @@ type FilterId =
   | "2fa"
   | "plugin";
 
-const FILTER_DEFS: {
-  id: FilterId;
-  label: string;
-  Icon: RemixiconComponentType;
-}[] = [
-  { id: "all", label: "Tout", Icon: RiSparkling2Line },
-  { id: "secrets", label: "Secrets", Icon: RiKey2Line },
-  { id: "deploy", label: "Déploiements", Icon: RiRocketLine },
-  { id: "project", label: "Projets", Icon: RiFolderOpenLine },
-  { id: "env", label: "Environnements", Icon: RiLeafLine },
-  { id: "member", label: "Membres", Icon: RiUserLine },
-  { id: "token", label: "Tokens", Icon: RiShieldKeyholeLine },
-  { id: "org", label: "Organisations", Icon: RiBuilding2Line },
-  { id: "service", label: "Services", Icon: RiToolsLine },
-  { id: "account", label: "Comptes", Icon: RiIdCardLine },
-  { id: "server", label: "Serveurs", Icon: RiServerLine },
-  { id: "policy", label: "Policies", Icon: RiStackLine },
-  { id: "login", label: "Connexions", Icon: RiDoorOpenLine },
-  { id: "2fa", label: "2FA", Icon: RiShieldCheckLine },
-  { id: "plugin", label: "Extension", Icon: RiPuzzle2Line },
+const FILTER_DEFS: { id: FilterId; Icon: RemixiconComponentType }[] = [
+  { id: "all", Icon: RiSparkling2Line },
+  { id: "secrets", Icon: RiKey2Line },
+  { id: "deploy", Icon: RiRocketLine },
+  { id: "project", Icon: RiFolderOpenLine },
+  { id: "env", Icon: RiLeafLine },
+  { id: "member", Icon: RiUserLine },
+  { id: "token", Icon: RiShieldKeyholeLine },
+  { id: "org", Icon: RiBuilding2Line },
+  { id: "service", Icon: RiToolsLine },
+  { id: "account", Icon: RiIdCardLine },
+  { id: "server", Icon: RiServerLine },
+  { id: "policy", Icon: RiStackLine },
+  { id: "login", Icon: RiDoorOpenLine },
+  { id: "2fa", Icon: RiShieldCheckLine },
+  { id: "plugin", Icon: RiPuzzle2Line },
 ];
+
+function getFilterDefs(
+  t: DashT,
+): { id: FilterId; label: string; Icon: RemixiconComponentType }[] {
+  return FILTER_DEFS.map((def) => ({
+    ...def,
+    label: t(`filters.${def.id}` as Parameters<DashT>[0]),
+  }));
+}
 
 function isFilterId(v: unknown): v is FilterId {
   return (
@@ -640,12 +653,18 @@ function RecentActivity({
   page,
   totalPages,
   total,
+  t,
+  filterDefs,
+  actionLabelsMap,
 }: {
   items: RecentActivityRow[];
   filter: FilterId;
   page: number;
   totalPages: number;
   total: number;
+  t: DashT;
+  filterDefs: { id: FilterId; label: string; Icon: RemixiconComponentType }[];
+  actionLabelsMap: Partial<Record<AccessAction, string>>;
 }) {
   const startIdx = total === 0 ? 0 : (page - 1) * ACTIVITY_PAGE_SIZE + 1;
   const endIdx = Math.min(total, page * ACTIVITY_PAGE_SIZE);
@@ -653,10 +672,10 @@ function RecentActivity({
   return (
     <section className="section" id="activity">
       <div className="section-header">
-        <h2 className="section-title">Activité récente</h2>
+        <h2 className="section-title">{t("activity.title")}</h2>
         {total > 0 && (
           <span className="help" style={{ fontSize: 12 }}>
-            {startIdx}–{endIdx} sur {total}
+            {t("activity.pagination", { start: startIdx, end: endIdx, total })}
           </span>
         )}
       </div>
@@ -665,9 +684,9 @@ function RecentActivity({
         className="flex flex-wrap gap-2"
         style={{ marginBottom: 12 }}
         role="tablist"
-        aria-label="Filtrer l'activité"
+        aria-label={t("activity.ariaLabel")}
       >
-        {FILTER_DEFS.map((def) => {
+        {filterDefs.map((def) => {
           const active = def.id === filter;
           const { Icon } = def;
           return (
@@ -691,8 +710,8 @@ function RecentActivity({
         <div className="empty-state">
           <div className="empty-state-title">
             {filter === "all"
-              ? "Aucune activité récente"
-              : "Aucune activité avec ce filtre"}
+              ? t("activity.emptyAll")
+              : t("activity.emptyFiltered")}
           </div>
         </div>
       ) : (
@@ -718,7 +737,7 @@ function RecentActivity({
                 </span>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>
-                    {actionLabel(item.action)}
+                    {actionLabel(item.action, actionLabelsMap)}
                   </div>
                   <div
                     className="help"
@@ -744,7 +763,7 @@ function RecentActivity({
                   style={{ fontSize: 12, whiteSpace: "nowrap" }}
                   title={item.createdAt.toISOString()}
                 >
-                  {relativeTime(item.createdAt)}
+                  {relativeTime(item.createdAt, t)}
                 </span>
               </li>
             ))}
@@ -762,7 +781,7 @@ function RecentActivity({
               href={buildActivityHref(filter, page - 1)}
               className="btn btn-ghost btn-sm"
             >
-              ← Précédent
+              {t("activity.prev")}
             </Link>
           ) : (
             <button
@@ -771,18 +790,18 @@ function RecentActivity({
               className="btn btn-ghost btn-sm"
               style={{ opacity: 0.4 }}
             >
-              ← Précédent
+              {t("activity.prev")}
             </button>
           )}
           <span className="help" style={{ fontSize: 12 }}>
-            Page {page} / {totalPages}
+            {t("activity.pageOf", { page, total: totalPages })}
           </span>
           {page < totalPages ? (
             <Link
               href={buildActivityHref(filter, page + 1)}
               className="btn btn-ghost btn-sm"
             >
-              Suivant →
+              {t("activity.next")}
             </Link>
           ) : (
             <button
@@ -791,7 +810,7 @@ function RecentActivity({
               className="btn btn-ghost btn-sm"
               style={{ opacity: 0.4 }}
             >
-              Suivant →
+              {t("activity.next")}
             </button>
           )}
         </div>
@@ -825,66 +844,71 @@ function actionIcon(action: AccessAction): string {
   return "•";
 }
 
-const ACTION_LABELS: Partial<Record<AccessAction, string>> = {
-  SECRET_CREATE: "Création d'un secret",
-  SECRET_UPDATE: "Mise à jour d'un secret",
-  SECRET_DELETE: "Suppression d'un secret",
-  SECRET_REVEAL: "Révélation d'un secret",
-  SECRET_FETCH_BULK: "Récupération de secrets",
-  TOKEN_CREATE: "Création d'un token",
-  TOKEN_REVOKE: "Révocation d'un token",
-  TOKEN_USE_FAILED: "Échec d'utilisation d'un token",
-  MEMBER_INVITE: "Invitation envoyée",
-  MEMBER_INVITE_ACCEPT: "Invitation acceptée",
-  MEMBER_INVITE_DECLINE: "Invitation refusée",
-  MEMBER_ROLE_CHANGE: "Changement de rôle",
-  MEMBER_REMOVE: "Membre retiré",
-  PROJECT_CREATE: "Création d'un projet",
-  PROJECT_UPDATE: "Mise à jour du projet",
-  PROJECT_DELETE: "Suppression du projet",
-  PROJECT_MEMBER_VISIBILITY_CHANGE: "Visibilité projet modifiée",
-  PROJECT_MEMBER_ROLE_CHANGE: "Rôle projet modifié",
-  ENVIRONMENT_CREATE: "Création d'un environnement",
-  ENVIRONMENT_UPDATE: "Mise à jour d'un environnement",
-  ENVIRONMENT_DELETE: "Suppression d'un environnement",
-  ORG_CREATE: "Création de l'organisation",
-  ORG_UPDATE: "Mise à jour de l'organisation",
-  ORG_DELETE: "Suppression de l'organisation",
-  ORG_SECRET_CREATE: "Création d'un secret org",
-  ORG_SECRET_UPDATE: "Mise à jour d'un secret org",
-  ORG_SECRET_DELETE: "Suppression d'un secret org",
-  ORG_SECRET_REVEAL: "Révélation d'un secret org",
-  SERVICE_CREATE: "Ajout d'un service",
-  SERVICE_UPDATE: "Mise à jour d'un service",
-  SERVICE_DELETE: "Suppression d'un service",
-  SERVICE_REVEAL: "Révélation d'un service",
-  ACCOUNT_CREATE: "Ajout d'un compte",
-  ACCOUNT_UPDATE: "Mise à jour d'un compte",
-  ACCOUNT_DELETE: "Suppression d'un compte",
-  ACCOUNT_REVEAL: "Révélation d'un compte",
-  REDEPLOY_TRIGGERED: "Re-déploiement déclenché",
-  COMPOSE_FETCHED: "Compose récupéré",
-  LOGIN_SUCCESS: "Connexion réussie",
-  LOGIN_FAILURE: "Échec de connexion",
-  TWO_FACTOR_ENABLED: "2FA activée",
-  TWO_FACTOR_DISABLED: "2FA désactivée",
-  TWO_FACTOR_SUCCESS: "2FA validée",
-  TWO_FACTOR_FAILURE: "Échec 2FA",
-  BACKUP_CODE_USED: "Code de secours utilisé",
-  SERVER_CREATE: "Ajout d'un serveur",
-  SERVER_UPDATE: "Mise à jour d'un serveur",
-  SERVER_DELETE: "Suppression d'un serveur",
-  POLICY_CREATE: "Ajout d'une policy",
-  POLICY_UPDATE: "Mise à jour d'une policy",
-  POLICY_DELETE: "Suppression d'une policy",
-  DEPLOY_AUTHORIZED: "Déploiement autorisé",
-  DEPLOY_DENIED: "Déploiement refusé",
-  PLUGIN_AUTH_SUCCESS: "Connexion extension",
-  PLUGIN_AUTH_FAILURE: "Échec extension",
-};
+function getActionLabels(t: DashT): Partial<Record<AccessAction, string>> {
+  return {
+    SECRET_CREATE: t("actions.SECRET_CREATE"),
+    SECRET_UPDATE: t("actions.SECRET_UPDATE"),
+    SECRET_DELETE: t("actions.SECRET_DELETE"),
+    SECRET_REVEAL: t("actions.SECRET_REVEAL"),
+    SECRET_FETCH_BULK: t("actions.SECRET_FETCH_BULK"),
+    TOKEN_CREATE: t("actions.TOKEN_CREATE"),
+    TOKEN_REVOKE: t("actions.TOKEN_REVOKE"),
+    TOKEN_USE_FAILED: t("actions.TOKEN_USE_FAILED"),
+    MEMBER_INVITE: t("actions.MEMBER_INVITE"),
+    MEMBER_INVITE_ACCEPT: t("actions.MEMBER_INVITE_ACCEPT"),
+    MEMBER_INVITE_DECLINE: t("actions.MEMBER_INVITE_DECLINE"),
+    MEMBER_ROLE_CHANGE: t("actions.MEMBER_ROLE_CHANGE"),
+    MEMBER_REMOVE: t("actions.MEMBER_REMOVE"),
+    PROJECT_CREATE: t("actions.PROJECT_CREATE"),
+    PROJECT_UPDATE: t("actions.PROJECT_UPDATE"),
+    PROJECT_DELETE: t("actions.PROJECT_DELETE"),
+    PROJECT_MEMBER_VISIBILITY_CHANGE: t("actions.PROJECT_MEMBER_VISIBILITY_CHANGE"),
+    PROJECT_MEMBER_ROLE_CHANGE: t("actions.PROJECT_MEMBER_ROLE_CHANGE"),
+    ENVIRONMENT_CREATE: t("actions.ENVIRONMENT_CREATE"),
+    ENVIRONMENT_UPDATE: t("actions.ENVIRONMENT_UPDATE"),
+    ENVIRONMENT_DELETE: t("actions.ENVIRONMENT_DELETE"),
+    ORG_CREATE: t("actions.ORG_CREATE"),
+    ORG_UPDATE: t("actions.ORG_UPDATE"),
+    ORG_DELETE: t("actions.ORG_DELETE"),
+    ORG_SECRET_CREATE: t("actions.ORG_SECRET_CREATE"),
+    ORG_SECRET_UPDATE: t("actions.ORG_SECRET_UPDATE"),
+    ORG_SECRET_DELETE: t("actions.ORG_SECRET_DELETE"),
+    ORG_SECRET_REVEAL: t("actions.ORG_SECRET_REVEAL"),
+    SERVICE_CREATE: t("actions.SERVICE_CREATE"),
+    SERVICE_UPDATE: t("actions.SERVICE_UPDATE"),
+    SERVICE_DELETE: t("actions.SERVICE_DELETE"),
+    SERVICE_REVEAL: t("actions.SERVICE_REVEAL"),
+    ACCOUNT_CREATE: t("actions.ACCOUNT_CREATE"),
+    ACCOUNT_UPDATE: t("actions.ACCOUNT_UPDATE"),
+    ACCOUNT_DELETE: t("actions.ACCOUNT_DELETE"),
+    ACCOUNT_REVEAL: t("actions.ACCOUNT_REVEAL"),
+    REDEPLOY_TRIGGERED: t("actions.REDEPLOY_TRIGGERED"),
+    COMPOSE_FETCHED: t("actions.COMPOSE_FETCHED"),
+    LOGIN_SUCCESS: t("actions.LOGIN_SUCCESS"),
+    LOGIN_FAILURE: t("actions.LOGIN_FAILURE"),
+    TWO_FACTOR_ENABLED: t("actions.TWO_FACTOR_ENABLED"),
+    TWO_FACTOR_DISABLED: t("actions.TWO_FACTOR_DISABLED"),
+    TWO_FACTOR_SUCCESS: t("actions.TWO_FACTOR_SUCCESS"),
+    TWO_FACTOR_FAILURE: t("actions.TWO_FACTOR_FAILURE"),
+    BACKUP_CODE_USED: t("actions.BACKUP_CODE_USED"),
+    SERVER_CREATE: t("actions.SERVER_CREATE"),
+    SERVER_UPDATE: t("actions.SERVER_UPDATE"),
+    SERVER_DELETE: t("actions.SERVER_DELETE"),
+    POLICY_CREATE: t("actions.POLICY_CREATE"),
+    POLICY_UPDATE: t("actions.POLICY_UPDATE"),
+    POLICY_DELETE: t("actions.POLICY_DELETE"),
+    DEPLOY_AUTHORIZED: t("actions.DEPLOY_AUTHORIZED"),
+    DEPLOY_DENIED: t("actions.DEPLOY_DENIED"),
+    PLUGIN_AUTH_SUCCESS: t("actions.PLUGIN_AUTH_SUCCESS"),
+    PLUGIN_AUTH_FAILURE: t("actions.PLUGIN_AUTH_FAILURE"),
+  };
+}
 
-function actionLabel(action: AccessAction): string {
-  return ACTION_LABELS[action] ?? action.replace(/_/g, " ").toLowerCase();
+function actionLabel(
+  action: AccessAction,
+  labels: Partial<Record<AccessAction, string>>,
+): string {
+  return labels[action] ?? action.replace(/_/g, " ").toLowerCase();
 }
 
 function formatContext(item: RecentActivityRow): string {
@@ -926,17 +950,17 @@ function truncateEmail(email: string, max = 22): string {
   return local + "@" + domain.slice(0, remaining - 1) + "…";
 }
 
-function relativeTime(date: Date): string {
+function relativeTime(date: Date, t: DashT): string {
   const diffMs = Date.now() - date.getTime();
   const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return "à l'instant";
+  if (sec < 60) return t("time.justNow");
   const min = Math.floor(sec / 60);
-  if (min < 60) return `il y a ${min} min`;
+  if (min < 60) return t("time.minutesAgo", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `il y a ${hr} h`;
+  if (hr < 24) return t("time.hoursAgo", { n: hr });
   const day = Math.floor(hr / 24);
-  if (day < 30) return `il y a ${day} j`;
+  if (day < 30) return t("time.daysAgo", { n: day });
   const month = Math.floor(day / 30);
-  if (month < 12) return `il y a ${month} mois`;
-  return `il y a ${Math.floor(day / 365)} an${day >= 730 ? "s" : ""}`;
+  if (month < 12) return t("time.monthsAgo", { n: month });
+  return t("time.yearsAgo", { n: Math.floor(day / 365) });
 }

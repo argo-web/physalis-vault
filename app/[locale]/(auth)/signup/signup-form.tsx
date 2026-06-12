@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { signupTenant, type SignupResult } from "./actions";
 
 function deriveSlug(input: string): string {
@@ -21,6 +22,8 @@ type SlugCheck =
   | { kind: "unavailable"; reason: string };
 
 export default function SignupForm() {
+  const t = useTranslations("auth.signup");
+  const tCommon = useTranslations("auth.common");
   const [state, action, pending] = useActionState<SignupResult | null, FormData>(
     signupTenant,
     null,
@@ -60,25 +63,25 @@ export default function SignupForm() {
         <div className="section-eyebrow" style={{ color: "var(--success)", fontSize: 13 }}>
           ✓ Compte créé
         </div>
-        <h2 style={{ margin: 0, fontSize: 18 }}>Bienvenue sur Physalis</h2>
+        <h2 style={{ margin: 0, fontSize: 18 }}>{t("successWelcome")}</h2>
         <p className="help">
           Votre organisation <strong>{state.slug}</strong> a été créée.<br />
           Connectez-vous avec <strong>{state.adminEmail}</strong>.
         </p>
         <Link href="/login" className="btn btn-primary" style={{ padding: "11px 16px", justifyContent: "center" }}>
-          Se connecter →
+          {t("signInButton")}
         </Link>
       </div>
     );
   }
 
   const slugAvailable = slugCheck.kind === "available";
-  const slugError = slugCheck.kind === "unavailable" ? slugLabel(slugCheck.reason) : null;
+  const slugError = slugCheck.kind === "unavailable" ? slugLabel(t, slugCheck.reason) : null;
 
   return (
     <form action={action} className="login-form">
       <div className="field">
-        <label>Nom de l&apos;organisation *</label>
+        <label>{t("orgNameLabel")}</label>
         <input
           type="text"
           name="name"
@@ -93,7 +96,7 @@ export default function SignupForm() {
       </div>
 
       <div className="field">
-        <label>Slug *</label>
+        <label>{t("slugLabel")}</label>
         <input
           type="text"
           name="slug"
@@ -104,7 +107,7 @@ export default function SignupForm() {
           placeholder="acme"
           className="input input-mono"
           pattern="[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?"
-          title="Lowercase, alphanumérique et tirets, 1-50 caractères."
+          title={t("slugTitle")}
         />
         <div
           className="help"
@@ -117,7 +120,7 @@ export default function SignupForm() {
                 : "var(--muted)",
           }}
         >
-          {slugCheck.kind === "checking" && "Vérification…"}
+          {slugCheck.kind === "checking" && t("slugChecking")}
           {slugCheck.kind === "available" && "✓ Disponible"}
           {slugCheck.kind === "unavailable" && slugError}
           {slugCheck.kind === "idle" && "Identifiant unique de votre organisation."}
@@ -125,19 +128,19 @@ export default function SignupForm() {
       </div>
 
       <div className="field">
-        <label>Email admin *</label>
+        <label>{t("adminEmailLabel")}</label>
         <input
           type="email"
           name="email"
           required
           autoComplete="email"
-          placeholder="vous@exemple.com"
+          placeholder={t("adminEmailPlaceholder")}
           className="input"
         />
       </div>
 
       <div className="field">
-        <label>Mot de passe (12 caractères minimum) *</label>
+        <label>{t("passwordLabel")}</label>
         <input
           type="password"
           name="password"
@@ -160,19 +163,22 @@ export default function SignupForm() {
       </button>
 
       <p className="text-xs text-muted" style={{ textAlign: "center" }}>
-        Déjà un compte ?{" "}
-        <Link href="/login" className="text-accent">Se connecter</Link>
+        {t("alreadyHaveAccount")}{" "}
+        <Link href="/login" className="text-accent">{tCommon("signIn")}</Link>
       </p>
     </form>
   );
 }
 
-function slugLabel(reason: string): string {
+function slugLabel(
+  t: ReturnType<typeof useTranslations<"auth.signup">>,
+  reason: string,
+): string {
   switch (reason) {
-    case "empty": return "Slug requis.";
-    case "invalid_format": return "Format invalide. Lowercase, lettres/chiffres/tirets uniquement.";
-    case "reserved": return "Ce slug est réservé.";
-    case "taken": return "Ce slug est déjà utilisé.";
-    default: return "Slug indisponible.";
+    case "empty": return t("slugErrors.empty");
+    case "invalid_format": return t("slugErrors.invalidFormat");
+    case "reserved": return t("slugErrors.reserved");
+    case "taken": return t("slugErrors.taken");
+    default: return t("slugErrors.default");
   }
 }

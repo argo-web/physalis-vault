@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import RateLimitAlert from "@/components/RateLimitAlert";
 
 export default function LoginForm({
@@ -11,6 +12,8 @@ export default function LoginForm({
 }: {
   allowRegistration: boolean;
 }) {
+  const t = useTranslations("auth.login");
+  const tCommon = useTranslations("auth.common");
   const router = useRouter();
   const params = useSearchParams();
   const callbackUrl = params.get("callbackUrl") || "/";
@@ -49,11 +52,11 @@ export default function LoginForm({
         }
         if (code === "2fa_invalid") {
           setNeedsTotp(true);
-          setError("Code 2FA invalide.");
+          setError(t("errorTotpInvalid"));
           setTotpCode("");
           return;
         }
-        setError("Email ou mot de passe invalide.");
+        setError(t("errorInvalidCredentials"));
         return;
       }
       router.push(callbackUrl);
@@ -64,7 +67,7 @@ export default function LoginForm({
   return (
     <form onSubmit={onSubmit} className="login-form">
       <div className="field">
-        <label>Email</label>
+        <label>{tCommon("emailLabel")}</label>
         <input
           type="email"
           required
@@ -77,7 +80,7 @@ export default function LoginForm({
       </div>
 
       <div className="field">
-        <label>Mot de passe</label>
+        <label>{t("passwordLabel")}</label>
         <input
           type="password"
           required
@@ -91,7 +94,7 @@ export default function LoginForm({
 
       {needsTotp && (
         <div className="field">
-          <label>Code 2FA (TOTP)</label>
+          <label>{t("totpLabel")}</label>
           <input
             required
             autoFocus
@@ -102,9 +105,7 @@ export default function LoginForm({
             autoComplete="one-time-code"
             className="input input-mono"
           />
-          <div className="help">
-            6 chiffres depuis votre app authenticator, ou un code de secours.
-          </div>
+          <div className="help">{t("totpHelp")}</div>
         </div>
       )}
 
@@ -118,10 +119,10 @@ export default function LoginForm({
         style={{ marginTop: 6, padding: "11px 16px", justifyContent: "center" }}
       >
         {pending
-          ? "Connexion..."
+          ? t("pendingButton")
           : needsTotp
-            ? "Valider le code"
-            : "Se connecter"}
+            ? t("validateTotpButton")
+            : tCommon("signIn")}
       </button>
 
       {needsTotp && (
@@ -135,23 +136,23 @@ export default function LoginForm({
           className="btn-link-danger"
           style={{ color: "var(--muted)", textAlign: "center" }}
         >
-          ← Recommencer
+          {t("retryButton")}
         </button>
       )}
 
       {!needsTotp && (
         <p className="text-xs text-muted" style={{ textAlign: "center" }}>
           <Link href="/forgot-password" className="text-accent">
-            Mot de passe oublié&nbsp;?
+            {t("forgotPassword")}
           </Link>
         </p>
       )}
 
       {allowRegistration && !needsTotp && (
         <p className="text-xs text-muted" style={{ textAlign: "center" }}>
-          Pas de compte ?{" "}
+          {t("noAccount")}{" "}
           <Link href="/signup" className="text-accent">
-            Créer un compte
+            {t("createAccount")}
           </Link>
         </p>
       )}

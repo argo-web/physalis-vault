@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getCurrentOrgSlug } from "@/lib/api";
 import { isSuperadmin } from "@/lib/roles";
+import { getTranslations } from "next-intl/server";
 import { RiAccountCircleLine } from "@remixicon/react";
 import OrgSwitcher from "./org-switcher";
 import HeaderNav from "./header-nav";
@@ -29,6 +30,7 @@ export default async function DashboardLayout({
   }
   const userId = session.user.id;
   const email = session.user.email ?? "";
+  const t = await getTranslations("dashboard.layout");
 
   const memberships = await prisma.orgMember.findMany({
     where: { userId },
@@ -78,15 +80,15 @@ export default async function DashboardLayout({
             }}
           >
             <button type="submit" className="btn btn-ghost btn-sm">
-              Déconnexion
+              {t("logout")}
             </button>
           </form>
           <Link
             href={`/${locale}/settings/security`}
             className="user-link"
             style={{ display: "inline-flex", alignItems: "center" }}
-            title={`Mon compte : ${email}`}
-            aria-label={`Mon compte : ${email}`}
+            title={`${t("myAccount")} : ${email}`}
+            aria-label={`${t("myAccount")} : ${email}`}
           >
             <RiAccountCircleLine size={24} aria-hidden />
           </Link>
