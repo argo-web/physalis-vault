@@ -33,7 +33,9 @@ const { auth } = NextAuth(authConfig);
 
 const LOCALES = ["en", "es", "fr"] as const;
 type Locale = (typeof LOCALES)[number];
-const DEFAULT_LOCALE: Locale = "en";
+// Self-host : langue par défaut de l'instance. L'utilisateur peut changer via
+// le LocaleSwitcher (pose un cookie NEXT_LOCALE). Mettre "en"/"es" si besoin.
+const DEFAULT_LOCALE: Locale = "fr";
 
 const PROTECTED_PREFIXES = [
   "/dashboard",
@@ -52,14 +54,14 @@ function getLocaleFromPath(path: string): Locale | null {
 }
 
 function detectLocale(req: NextRequest): Locale {
+  // 1. Préférence explicite de l'utilisateur (cookie posé par LocaleSwitcher).
   const cookie = req.cookies.get("NEXT_LOCALE")?.value;
   if (cookie && LOCALES.includes(cookie as Locale)) return cookie as Locale;
 
-  const acceptLang = req.headers.get("accept-language") ?? "";
-  for (const part of acceptLang.split(",")) {
-    const lang = part.trim().split(";")[0].substring(0, 2);
-    if (LOCALES.includes(lang as Locale)) return lang as Locale;
-  }
+  // 2. Sinon langue par défaut de l'instance (DEFAULT_LOCALE). On n'utilise
+  //    PAS Accept-Language en self-host : l'opérateur choisit la langue par
+  //    défaut, l'utilisateur change via le sélecteur. (Pour revenir à la
+  //    détection navigateur, ré-introduire la boucle sur `accept-language`.)
   return DEFAULT_LOCALE;
 }
 
@@ -135,6 +137,10 @@ export default auth((req) => {
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", csp);
+  // next-intl lit ce header dans getRequestConfig (i18n/request.ts) pour
+  // peupler `requestLocale`. Sans lui, la locale reste undefined → fallback
+  // sur defaultLocale partout, et changer d'URL /en|/es ne traduit rien.
+  requestHeaders.set("x-next-intl-locale", pathLocale);
 
   const response = NextResponse.next({
     request: { headers: requestHeaders },

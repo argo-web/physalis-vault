@@ -7,8 +7,10 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getCurrentOrgSlug } from "@/lib/api";
 import { isSuperadmin } from "@/lib/roles";
+import { RiAccountCircleLine } from "@remixicon/react";
 import OrgSwitcher from "./org-switcher";
 import HeaderNav from "./header-nav";
+import LocaleSwitcher from "@/components/LocaleSwitcher";
 
 // Self-host : single-tenant. Pas de bandeau billing/quota Stripe (réservé
 // au SaaS). Le layout original est dans le repo SaaS.
@@ -68,13 +70,7 @@ export default async function DashboardLayout({
               Admin
             </Link>
           )}
-          <Link
-            href={`/${locale}/settings/security`}
-            className="user-link"
-            title="Paramètres de sécurité (2FA, sessions plugin)"
-          >
-            {email}
-          </Link>
+          <LocaleSwitcher />
           <form
             action={async () => {
               "use server";
@@ -85,6 +81,15 @@ export default async function DashboardLayout({
               Déconnexion
             </button>
           </form>
+          <Link
+            href={`/${locale}/settings/security`}
+            className="user-link"
+            style={{ display: "inline-flex", alignItems: "center" }}
+            title={`Mon compte : ${email}`}
+            aria-label={`Mon compte : ${email}`}
+          >
+            <RiAccountCircleLine size={24} aria-hidden />
+          </Link>
         </div>
       </header>
       <main className="flex-1">{children}</main>

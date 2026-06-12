@@ -51,7 +51,7 @@ export default function HeaderNav() {
     { href: "/vault", label: t("vault"), Icon: RiSafe2Line },
     { href: "/shares", label: t("shares"), Icon: RiShareForward2Line },
     { href: "/docs", label: t("docs"), Icon: RiBookOpenLine },
-    { href: "/settings/parameters", label: t("parameters"), Icon: RiSettings3Line },
+    { href: "/settings/security", label: t("parameters"), Icon: RiSettings3Line },
   ];
 
   function isActive(href: string): boolean {
@@ -59,7 +59,7 @@ export default function HeaderNav() {
     if (href === "/vault") return pathname === "/vault";
     if (href === "/shares") return pathname === "/shares";
     if (href === "/docs") return pathname.startsWith("/docs");
-    if (href === "/settings/parameters") return pathname.startsWith("/settings");
+    if (href === "/settings/security") return pathname.startsWith("/settings");
     return pathname === href;
   }
 
