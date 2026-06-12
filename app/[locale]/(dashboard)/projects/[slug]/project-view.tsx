@@ -70,7 +70,7 @@ export default function ProjectView({
   role: ProjectRole;
   /** OrgRole transversal — OrgDEV peut gérer les policies au même titre
    *  qu'un ProjectOWNER, contrairement à un ProjectEDITOR explicite. */
-  orgRole: "OWNER" | "ADMIN" | "DEV" | "MEMBER" | null;
+  orgRole: "OWNER" | "ADMIN" | "ADMIN_DEV" | "DEV" | "MEMBER" | null;
 }) {
   const sortedEnvs = [...environments].sort(sortEnvs);
   const [tab, setTab] = useState<MainTab>({ kind: "access" });

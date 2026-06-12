@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateStrength } from "@/lib/password-strength";
+import { estimateStrength, strengthMeta } from "@/lib/password-strength";
 
 describe("lib/password-strength — estimateStrength", () => {
   it("vide = 0 (très faible)", () => {
@@ -55,5 +55,25 @@ describe("lib/password-strength — estimateStrength", () => {
   it("renvoie un hint pour les scores faibles", () => {
     expect(estimateStrength("abc").hint).toBeTruthy();
     expect(estimateStrength("Abcdefgh1234!@#$").hint).toBe(null);
+  });
+});
+
+describe("lib/password-strength — strengthMeta", () => {
+  it("mappe chaque score 0-4 vers label + color", () => {
+    for (let s = 0; s <= 4; s++) {
+      const m = strengthMeta(s);
+      expect(m.label).toBeTruthy();
+      expect(m.color).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+
+  it("cohérent avec estimateStrength pour un score donné", () => {
+    const r = estimateStrength("Xnzhqwmp9285!@#$"); // score 4
+    expect(strengthMeta(r.score)).toEqual({ label: r.label, color: r.color });
+  });
+
+  it("clampe les valeurs hors borne (DB corrompue)", () => {
+    expect(strengthMeta(-3)).toEqual(strengthMeta(0));
+    expect(strengthMeta(99)).toEqual(strengthMeta(4));
   });
 });

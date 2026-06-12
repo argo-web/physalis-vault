@@ -3,19 +3,23 @@ import { cookies } from "next/headers";
 import { auth } from "./auth";
 import { prisma } from "./prisma";
 import type { OrgRole, ProjectRole, Role } from "@prisma/client";
-import { isPlatformAdmin } from "./roles";
+import { isPlatformAdmin, hasDevPrivileges } from "./roles";
+import { isSessionInvalidated } from "./session-validity";
 
 export type AuthedUser = {
   id: string;
   email: string;
   role: Role;
+  /** #5 — instant d'émission du JWT (ms epoch), null si token legacy. */
+  loginAt: number | null;
 };
 
 const ORG_ROLE_RANK: Record<OrgRole, number> = {
   MEMBER: 1,
   DEV: 2,
-  ADMIN: 3,
-  OWNER: 4,
+  ADMIN_DEV: 3,
+  ADMIN: 4,
+  OWNER: 5,
 };
 
 const PROJECT_ROLE_RANK: Record<ProjectRole, number> = {
@@ -36,11 +40,29 @@ export async function requireUser(): Promise<
     };
   }
 
+  // #5 — invalidation de session : rejette un JWT émis AVANT que l'user ait
+  // reset son mdp ou désactivé sa 2FA (User.sessionsValidFrom). `loginAt`
+  // null = token legacy (émis avant l'introduction du champ) → on le laisse
+  // vivre jusqu'à expiration naturelle.
+  const loginAt = session.user.loginAt ?? null;
+  if (loginAt != null) {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { sessionsValidFrom: true },
+    });
+    if (isSessionInvalidated(loginAt, dbUser?.sessionsValidFrom)) {
+      return {
+        error: NextResponse.json({ error: "Session expired" }, { status: 401 }),
+      };
+    }
+  }
+
   return {
     user: {
       id: session.user.id,
       email: session.user.email ?? "",
       role: session.user.role,
+      loginAt,
     },
   };
 }
@@ -163,7 +185,7 @@ export async function requireProjectMember(
       };
     }
     effectiveRole = projectMembership.role;
-  } else if (orgRole === "DEV") {
+  } else if (hasDevPrivileges(orgRole)) {
     effectiveRole = "EDITOR";
   }
   // MEMBER sans ProjectMember explicite → effectiveRole reste null → 403.

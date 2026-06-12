@@ -1,4 +1,4 @@
-> **⚠️ Pré-release — version 0.1.0**
+> **⚠️ Pré-release — version 0.0.3**
 >
 > Ce repo de self-host est en **cours de test** et n'a pas encore été
 > validé en production. L'API, le schéma de base de données et le flux
@@ -50,6 +50,10 @@ L'application supporte plusieurs organisations isolées, chacune avec ses propre
 
 **Pour les machines** — authentification OIDC GitHub Actions. Au moment du déploiement, le workflow GitHub obtient un token signé par GitHub (sans aucun secret stocké dans GitHub Secrets) et le présente à Physalis. Le vault vérifie la signature cryptographiquement, contrôle que le repo, le workflow et la branche correspondent exactement à une règle autorisée, puis retourne en une seule requête l'ensemble du bundle de déploiement : variables d'environnement déchiffrées, clé SSH du serveur cible, chemin de déploiement, docker-compose, et credentials du registry Docker.
 
+### Envoi d'emails par projet (Pink-Floyd)
+
+Chaque projet peut être relié à **Pink-Floyd**, un serveur d'envoi d'emails auto-hébergé, pour envoyer ses emails depuis son propre domaine. L'organisation active le service une fois (compte partagé), puis chaque projet connecte son domaine, configure les DNS (SPF/DKIM/DMARC) et gère ses expéditeurs autorisés depuis l'interface — onglet **Email** avec sous-sections Détails, Envoi, Expéditeurs, Historique. La clé API est chiffrée au repos et injectée automatiquement dans le `.env` de chaque environnement au déploiement, avec **rotation automatique** optionnelle (blue/green). Physalis n'est jamais dans le chemin runtime d'envoi.
+
 ### Traçabilité complète
 
 Chaque action — lecture d'un secret, modification, connexion, déploiement, invitation — est enregistrée dans un audit log persistant avec l'acteur, l'IP, et l'horodatage. Exportable en CSV, consultable par projet ou par organisation.
@@ -78,48 +82,40 @@ Un VPS secondaire reçoit chaque nuit une copie chiffrée de la base de données
 
 ---
 
-## Installation
+## Quickstart
 
-### 1. Pull & run (recommandé)
-
-Aucun clone, aucun build — deux fichiers suffisent :
+### 1. Local — stack complète (Docker)
 
 ```bash
-curl -O https://raw.githubusercontent.com/argo-web/physalis-vault/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/argo-web/physalis-vault/main/.env.example
 cp .env.example .env
+# Renseigner ENCRYPTION_KEY, AUTH_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+docker compose up -d --build
 ```
 
-Éditer `.env` : renseigner au minimum `DB_PASSWORD`, `ENCRYPTION_KEY`, `AUTH_SECRET`, `NEXTAUTH_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `NEXTAUTH_URL`.
+→ http://localhost:3001 (3000 réservé sur certains hôtes ; ajustable dans
+[docker-compose.yml](docker-compose.yml)).
+
+Le premier démarrage applique les migrations Prisma et crée l'admin défini par
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` ([scripts/bootstrap-admin.mjs](scripts/bootstrap-admin.mjs)).
+
+### 2. Local — dev natif (hot-reload)
 
 ```bash
-docker compose up -d
-```
-
-→ http://localhost:3000 (configurable via `PORT` dans `.env`).
-
-Le premier démarrage applique les migrations Prisma et crée le compte admin défini par `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Les démarrages suivants sont idempotents.
-
-### 2. Build depuis les sources (dev / contribution)
-
-```bash
-git clone https://github.com/argo-web/physalis-vault.git
-cd physalis-vault
-cp .env.example .env   # Renseigner les variables
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-La DB est exposée sur le port `5432` de l'hôte pour permettre d'utiliser `prisma studio` ou les outils locaux.
-
-Pour le dev natif (hot-reload) :
-
-```bash
-docker compose -f docker-compose.dev.yml up -d db   # DB seule
+docker compose -f docker-compose.dev.yml up -d   # Postgres seul (port 5434)
 npm install
-npx prisma migrate dev --schema=prisma/schema.prisma
+npx prisma migrate dev
 npm run bootstrap-admin
-npm run dev                                          # http://localhost:3000
+npm run dev                                       # http://localhost:3000
 ```
+
+### 3. Production (VPS derrière Nginx Proxy Manager)
+
+Déploiement automatique sur push `main` via [.github/workflows/deploy.yml](.github/workflows/deploy.yml) :
+test → build/push GHCR → SSH deploy + health check.
+
+Voir [docs/physalis.md §10.3](docs/physalis.md) pour le setup VPS initial
+(création du dossier, génération de la clé SSH dédiée au workflow, contenu de
+`.env`, secrets GitHub à créer).
 
 ---
 
@@ -141,7 +137,7 @@ Aucun secret GitHub n'est consommé. Clé SSH et registry creds vivent chiffrés
 dans le vault. Template prêt à coller : [docs/deploy-oidc.yml](docs/deploy-oidc.yml)
 (deploy avec rebuild) ou [docs/redeploy-oidc.yml](docs/redeploy-oidc.yml)
 (redeploy sans rebuild). Migration détaillée en
-[docs/physalis.md §10.5](docs/physalis.md).
+[docs/physalis.md §10.6](docs/physalis.md).
 
 ### Mode 2 — Bearer machine token (fallback hors GitHub)
 
@@ -203,7 +199,7 @@ RPO 24h, RTO 5-20 min (restore DB) + propagation DNS. Failover manuel
 Next.js 15 (App Router) · TypeScript · Prisma 6 + PostgreSQL 16 ·
 NextAuth v5 (Credentials, JWT) · bcryptjs (salt 12) · AES-256-GCM ·
 jose 6 (OIDC JWKS) · 2FA TOTP (otplib) · Tailwind 3 · Mailgun · Docker
-multi-stage (node:22-alpine).
+multi-stage (node:22-alpine) · intégration Pink-Floyd (emails par projet).
 
 ## Tests
 

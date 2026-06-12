@@ -1,12 +1,16 @@
-// /docs — page d'accueil de la doc, liste les catégories disponibles.
-
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { getTranslations } from "next-intl/server";
 import { RiArrowRightLine, RiBookOpenLine } from "@remixicon/react";
 import { listDocPages } from "@/lib/docs";
 import { DocIcon } from "@/lib/docs-icons";
 
-export default async function DocsIndexPage() {
-  const pages = await listDocPages();
+type Props = { params: Promise<{ locale: string }> };
+
+export default async function DocsIndexPage({ params }: Props) {
+  const { locale } = await params;
+  const t = await getTranslations("docs");
+  const pages = await listDocPages(locale);
+
   return (
     <>
       <div className="docs-hero">
@@ -14,11 +18,8 @@ export default async function DocsIndexPage() {
           <RiBookOpenLine size={28} aria-hidden />
         </div>
         <div>
-          <h1 className="docs-hero-title">Documentation</h1>
-          <p className="docs-hero-subtitle">
-            Guides d&apos;utilisation de Physalis. Choisissez une section
-            ci-dessous ou via la barre latérale.
-          </p>
+          <h1 className="docs-hero-title">{t("title")}</h1>
+          <p className="docs-hero-subtitle">{t("subtitle")}</p>
         </div>
       </div>
 
@@ -30,7 +31,7 @@ export default async function DocsIndexPage() {
             </div>
             <div className="docs-card-body">
               <div className="docs-card-eyebrow">
-                Section {String(idx + 1).padStart(2, "0")}
+                {t("section")} {String(idx + 1).padStart(2, "0")}
               </div>
               <div className="docs-card-title">{p.title}</div>
               <div className="docs-card-summary">{p.summary}</div>

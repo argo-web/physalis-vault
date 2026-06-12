@@ -9,7 +9,8 @@
 //   - Refuser → DELETE /api/me/invitations/[id] → reload la liste
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { RiMailLine } from "@remixicon/react";
 
 type PendingInvitation = {
@@ -22,6 +23,7 @@ type PendingInvitation = {
 };
 
 export default function PendingInvitations() {
+  const t = useTranslations("dashboard.invitations");
   const router = useRouter();
   const [invitations, setInvitations] = useState<PendingInvitation[] | null>(
     null,
@@ -33,7 +35,7 @@ export default function PendingInvitations() {
     setError(null);
     const res = await fetch("/api/me/invitations");
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as { invitations: PendingInvitation[] };
@@ -50,7 +52,7 @@ export default function PendingInvitations() {
         method: "POST",
       });
       if (!res.ok) {
-        setError("Acceptation impossible.");
+        setError(t("acceptError"));
         return;
       }
       // Bascule l'org courante sur la nouvelle (UX : on arrive direct dedans).
@@ -65,14 +67,14 @@ export default function PendingInvitations() {
   }
 
   function decline(inv: PendingInvitation) {
-    if (!confirm(`Refuser l'invitation à rejoindre ${inv.organization.name} ?`))
+    if (!confirm(t("declineConfirm", { orgName: inv.organization.name })))
       return;
     startTransition(async () => {
       const res = await fetch(`/api/me/invitations/${inv.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
-        setError("Refus impossible.");
+        setError(t("declineError"));
         return;
       }
       reload();
@@ -96,7 +98,7 @@ export default function PendingInvitations() {
         className="section-title"
         style={{ fontSize: 15, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}
       >
-        <RiMailLine size={16} aria-hidden /> Invitation{invitations.length > 1 ? "s" : ""} en attente
+        <RiMailLine size={16} aria-hidden /> {t("title", { count: invitations.length })}
       </h2>
       {error && <p className="error-text">{error}</p>}
       <div className="row-list" style={{ gap: 6 }}>
@@ -109,7 +111,7 @@ export default function PendingInvitations() {
             <div className="row-icon"><RiMailLine size={18} aria-hidden /></div>
             <div className="row-info">
               <div className="row-name">
-                Rejoindre <strong>{inv.organization.name}</strong>{" "}
+                {t("join")} <strong>{inv.organization.name}</strong>{" "}
                 <span
                   className={`role role-${inv.role.toLowerCase()}`}
                   style={{ marginLeft: 6 }}
@@ -118,9 +120,9 @@ export default function PendingInvitations() {
                 </span>
               </div>
               <div className="row-meta">
-                <span>Invité par {inv.invitedBy.email}</span>
+                <span>{t("invitedBy", { email: inv.invitedBy.email })}</span>
                 <span>
-                  · expire le {new Date(inv.expiresAt).toLocaleDateString()}
+                  {t("expiresAt", { date: new Date(inv.expiresAt).toLocaleDateString() })}
                 </span>
               </div>
             </div>
@@ -131,7 +133,7 @@ export default function PendingInvitations() {
                 disabled={pending}
                 className="btn btn-primary btn-sm"
               >
-                Valider
+                {t("acceptBtn")}
               </button>
               <button
                 type="button"
@@ -139,7 +141,7 @@ export default function PendingInvitations() {
                 disabled={pending}
                 className="btn btn-ghost btn-sm"
               >
-                Refuser
+                {t("declineBtn")}
               </button>
             </div>
           </div>

@@ -1,11 +1,13 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { resetPassword, type ResetResult } from "./actions";
 
 export default function ResetForm({ token }: { token: string }) {
+  const t = useTranslations("auth.resetPassword");
+  const tCommon = useTranslations("auth.common");
   const router = useRouter();
   const [state, action, pending] = useActionState<
     ResetResult | null,
@@ -18,8 +20,7 @@ export default function ResetForm({ token }: { token: string }) {
     return (
       <div className="login-form" style={{ gap: 12 }}>
         <p className="help" style={{ textAlign: "center" }}>
-          Votre mot de passe a été mis à jour. Vous pouvez maintenant vous
-          connecter avec votre nouveau mot de passe.
+          {t("successMessage")}
         </p>
         <button
           type="button"
@@ -27,7 +28,7 @@ export default function ResetForm({ token }: { token: string }) {
           onClick={() => router.push("/login")}
           style={{ padding: "11px 16px", justifyContent: "center" }}
         >
-          Se connecter
+          {tCommon("signIn")}
         </button>
       </div>
     );
@@ -37,7 +38,7 @@ export default function ResetForm({ token }: { token: string }) {
     <form action={action} className="login-form">
       <input type="hidden" name="token" value={token} />
       <div className="field">
-        <label>Nouveau mot de passe</label>
+        <label>{t("newPasswordLabel")}</label>
         <input
           type="password"
           name="password"
@@ -50,7 +51,7 @@ export default function ResetForm({ token }: { token: string }) {
         />
       </div>
       <div className="field">
-        <label>Confirmer le mot de passe</label>
+        <label>{t("confirmPasswordLabel")}</label>
         <input
           type="password"
           name="confirm"
@@ -62,7 +63,7 @@ export default function ResetForm({ token }: { token: string }) {
         />
       </div>
       <p className="help" style={{ fontSize: 13 }}>
-        12 caractères minimum.
+        {t("minLength")}
       </p>
       {state?.ok === false && (
         <div
@@ -78,14 +79,14 @@ export default function ResetForm({ token }: { token: string }) {
         disabled={pending || password.length < 12 || password !== confirm}
         style={{ padding: "11px 16px", justifyContent: "center" }}
       >
-        {pending ? "Validation…" : "Définir le nouveau mot de passe"}
+        {pending ? t("pendingButton") : t("submitButton")}
       </button>
       <Link
         href="/login"
         className="btn btn-ghost btn-sm"
         style={{ alignSelf: "center" }}
       >
-        Annuler
+        {tCommon("cancel")}
       </Link>
     </form>
   );

@@ -17,8 +17,9 @@ type ServerListItem = {
 const ORG_ROLE_RANK: Record<OrgRole, number> = {
   MEMBER: 1,
   DEV: 2,
-  ADMIN: 3,
-  OWNER: 4,
+  ADMIN_DEV: 3,
+  ADMIN: 4,
+  OWNER: 5,
 };
 
 export default function ServersPanel({

@@ -369,7 +369,7 @@ export async function requireOrgScope(
   | {
       user: AuthedUser;
       organizationId: string;
-      orgRole: "OWNER" | "ADMIN" | "DEV" | "MEMBER";
+      orgRole: "OWNER" | "ADMIN" | "ADMIN_DEV" | "DEV" | "MEMBER";
     }
   | { error: NextResponse }
 > {
@@ -393,8 +393,8 @@ export async function requireOrgScope(
     };
   }
 
-  const ORG_RANK = { MEMBER: 1, DEV: 2, ADMIN: 3, OWNER: 4 } as const;
-  const orgRole: "OWNER" | "ADMIN" | "DEV" | "MEMBER" | null =
+  const ORG_RANK = { MEMBER: 1, DEV: 2, ADMIN_DEV: 3, ADMIN: 4, OWNER: 5 } as const;
+  const orgRole: "OWNER" | "ADMIN" | "ADMIN_DEV" | "DEV" | "MEMBER" | null =
     org.members[0]?.role ?? (isPlatformAdmin(user.role) ? "OWNER" : null);
   if (!orgRole || ORG_RANK[orgRole] < ORG_RANK[requiredOrgRole]) {
     return {

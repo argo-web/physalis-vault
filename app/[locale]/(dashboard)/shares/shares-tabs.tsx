@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useRouter, usePathname } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import SharesList from "./shares-list";
 import SecretRequestsTab from "./secret-requests-tab";
 import SecretRequestCreateButton from "./secret-request-create-button";
@@ -10,6 +12,7 @@ import ShareCreateButton from "../share-create-button";
 type Tab = "mine" | "external";
 
 export default function SharesTabs() {
+  const t = useTranslations("shares");
   const sp = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -40,14 +43,14 @@ export default function SharesTabs() {
             className={`tab ${tab === "mine" ? "active" : ""}`}
             onClick={() => setTab("mine")}
           >
-            Mes partages
+            {t("tabMyShares")}
           </button>
           <button
             type="button"
             className={`tab ${tab === "external" ? "active" : ""}`}
             onClick={() => setTab("external")}
           >
-            Demandes externes
+            {t("tabExternalRequests")}
           </button>
         </div>
         {/* Bouton d'action contextuel — toujours à droite, change selon

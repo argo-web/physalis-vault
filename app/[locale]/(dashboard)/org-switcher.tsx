@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import type { OrgRole } from "@prisma/client";
 
 type Org = { id: string; name: string; slug: string; role: OrgRole };
@@ -19,6 +20,7 @@ export default function OrgSwitcher({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
 
+  const t = useTranslations("dashboard.orgSwitcher");
   const current = organizations.find((o) => o.slug === currentSlug);
 
   async function setCurrentOrg(slug: string): Promise<boolean> {
@@ -103,7 +105,7 @@ export default function OrgSwitcher({
         onClick={() => setOpen((v) => !v)}
         className="org-pill"
       >
-        <span>{current?.name ?? "Choisir une organisation"}</span>
+        <span>{current?.name ?? t("placeholder")}</span>
         <span className="chev">▾</span>
       </button>
 
@@ -141,8 +143,8 @@ export default function OrgSwitcher({
                   type="button"
                   onClick={() => switchAndOpenSettings(org.slug)}
                   disabled={pending}
-                  aria-label={`Paramètres de ${org.name}`}
-                  title="Ouvrir l'organisation"
+                  aria-label={t("orgSettings", { name: org.name })}
+                  title={t("openOrg")}
                   className="p-2 mr-1 rounded-md text-muted hover:text-fg hover:bg-code-bg transition-colors"
                 >
                   <SettingsIcon />
@@ -158,7 +160,7 @@ export default function OrgSwitcher({
                   autoFocus
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Nom de l'organisation"
+                  placeholder={t("newOrgName")}
                   className="input"
                 />
                 <div className="flex gap-2">
@@ -167,7 +169,7 @@ export default function OrgSwitcher({
                     disabled={pending}
                     className="btn btn-primary btn-sm"
                   >
-                    Créer
+                    {t("create")}
                   </button>
                   <button
                     type="button"
@@ -177,7 +179,7 @@ export default function OrgSwitcher({
                     }}
                     className="btn btn-ghost btn-sm"
                   >
-                    Annuler
+                    {t("cancel")}
                   </button>
                 </div>
               </form>
@@ -187,7 +189,7 @@ export default function OrgSwitcher({
                 onClick={() => setCreating(true)}
                 className="w-full text-left text-xs px-2 py-1.5 text-muted hover:text-fg transition-colors"
               >
-                + Nouvelle organisation
+                {t("newOrg")}
               </button>
             )}
           </div>

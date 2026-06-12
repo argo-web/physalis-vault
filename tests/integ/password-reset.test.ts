@@ -10,7 +10,7 @@
 // → markResetTokenUsed) est couvert par les tests RBAC end-to-end qui
 // déclenchent un parcours utilisateur réel.
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { execSql, selectRows } from "./helpers/db";
 

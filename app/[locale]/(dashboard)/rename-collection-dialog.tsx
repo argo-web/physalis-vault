@@ -6,6 +6,7 @@
 // classes .dialog* de globals.css.
 
 import { useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 
 const NAME_MAX = 80;
 
@@ -23,6 +24,7 @@ export default function RenameCollectionDialog({
    *  peut avoir change (derive du nom). */
   onRenamed: () => void;
 }) {
+  const t = useTranslations("vault.renameCollection");
   const [name, setName] = useState(currentName);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -31,15 +33,7 @@ export default function RenameCollectionDialog({
     e.preventDefault();
     setError(null);
     const trimmed = name.trim();
-    if (!trimmed) {
-      setError("Le nom ne peut pas être vide.");
-      return;
-    }
-    if (trimmed.length > NAME_MAX) {
-      setError(`Le nom doit faire ${NAME_MAX} caractères au maximum.`);
-      return;
-    }
-    if (trimmed === currentName) {
+    if (!trimmed || trimmed === currentName) {
       onClose();
       return;
     }
@@ -53,7 +47,7 @@ export default function RenameCollectionDialog({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Renommage impossible.");
+        setError(data?.error ?? t("error"));
         return;
       }
       onRenamed();
@@ -64,12 +58,12 @@ export default function RenameCollectionDialog({
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Renommer la collection</h2>
+          <h2 className="dialog-title">{t("title")}</h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("cancelBtn")}
           >
             ✕
           </button>
@@ -77,7 +71,7 @@ export default function RenameCollectionDialog({
         <form onSubmit={submit}>
           <div className="dialog-body">
             <div className="field">
-              <label htmlFor="rename-collection-name">Nom</label>
+              <label htmlFor="rename-collection-name">{t("nameLabel")}</label>
               <input
                 id="rename-collection-name"
                 autoFocus
@@ -96,14 +90,14 @@ export default function RenameCollectionDialog({
               className="btn btn-ghost btn-sm"
               disabled={pending}
             >
-              Annuler
+              {t("cancelBtn")}
             </button>
             <button
               type="submit"
               disabled={pending || !name.trim()}
               className="btn btn-primary btn-sm"
             >
-              {pending ? "Renommage…" : "Renommer"}
+              {pending ? t("submittingBtn") : t("submitBtn")}
             </button>
           </div>
         </form>

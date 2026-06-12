@@ -33,7 +33,6 @@ const BOB_PASSWORD = "bobtestpassword12";
 const ORG_A_SLUG = `idor-a-${SUFFIX}`;
 const ORG_B_SLUG = `idor-b-${SUFFIX}`;
 
-let admin: Session;
 let bob: Session;
 let orgAId = "";
 let orgBId = "";
@@ -87,7 +86,7 @@ async function inviteBobToOrg(orgId: string, invitedById: string) {
 }
 
 beforeAll(async () => {
-  admin = await adminSession();
+  await adminSession();
   adminUserId = (
     await execSql(`SELECT id FROM "${TENANT_SCHEMA}"."User" WHERE email = '${ADMIN_EMAIL}'`)
   ).trim();

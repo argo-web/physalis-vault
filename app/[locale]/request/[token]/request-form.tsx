@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { RiLockLine } from "@remixicon/react";
 import { encryptForRecipient } from "@/lib/secret-request-crypto";
+import { hybridEncryptForRecipient } from "@/lib/hybrid-kem";
 
 export default function RequestForm({
   token,
@@ -10,6 +11,7 @@ export default function RequestForm({
   description,
   requestedByEmail,
   publicKeyJwk,
+  mlkemPublicKey,
   expiresAt,
 }: {
   token: string;
@@ -17,6 +19,7 @@ export default function RequestForm({
   description: string | null;
   requestedByEmail: string;
   publicKeyJwk: string;
+  mlkemPublicKey: string | null;
   expiresAt: string;
 }) {
   const [secret, setSecret] = useState("");
@@ -38,7 +41,11 @@ export default function RequestForm({
     startTransition(async () => {
       try {
         // Chiffrement local — le secret ne sort jamais du navigateur en clair.
-        const payload = await encryptForRecipient(secret, publicKeyJwk);
+        // Hybride ECDH P-256 + ML-KEM-768 si la demande l'expose, sinon ECDH
+        // seul (demandes legacy). Le payload hybride porte hybridVersion=1.
+        const payload = mlkemPublicKey
+          ? await hybridEncryptForRecipient(secret, publicKeyJwk, mlkemPublicKey)
+          : await encryptForRecipient(secret, publicKeyJwk);
         const res = await fetch(`/api/public/secret-requests/${token}/submit`, {
           method: "POST",
           headers: { "content-type": "application/json" },

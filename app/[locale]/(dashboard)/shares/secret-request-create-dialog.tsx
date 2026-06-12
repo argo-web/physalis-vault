@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { RiSaveLine } from "@remixicon/react";
+import { useTranslations } from "next-intl";
 
 type Org = { id: string; name: string; slug: string };
 type Project = { id: string; name: string; slug: string };
@@ -15,6 +16,7 @@ export default function SecretRequestCreateDialog({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const t = useTranslations("shares");
   const [label, setLabel] = useState("");
   const [description, setDescription] = useState("");
   const [orgId, setOrgId] = useState(orgs[0]?.id ?? "");
@@ -80,7 +82,7 @@ export default function SecretRequestCreateDialog({
         const data = (await res.json().catch(() => null)) as {
           error?: string;
         } | null;
-        setError(data?.error ?? "Création impossible.");
+        setError(data?.error ?? t("createRequestDialog.error"));
         return;
       }
       const data = (await res.json()) as {
@@ -112,9 +114,9 @@ export default function SecretRequestCreateDialog({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          name: `Clé privée — ${created.label}`,
+          name: `Private key — ${created.label}`,
           password: created.privateKey,
-          tags: ["secret-request", "ecdh-key"],
+          tags: ["secret-request", "hybrid-pqc-key"],
         }),
       });
       if (res.ok) setSavedToVault(true);
@@ -138,13 +140,13 @@ export default function SecretRequestCreateDialog({
       >
         <div className="dialog-header">
           <h2 className="dialog-title">
-            {created ? "Demande créée" : "Autoriser un partage externe"}
+            {created ? t("requestCreated.title") : t("createRequestDialog.title")}
           </h2>
           <button
             type="button"
             onClick={created ? done : onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("createRequestDialog.cancelBtn")}
           >
             ✕
           </button>
@@ -161,12 +163,10 @@ export default function SecretRequestCreateDialog({
                   fontSize: 13,
                 }}
               >
-                <strong>⚠️ Sauvegardez cette clé privée.</strong> Elle ne sera
-                plus jamais affichée. Sans elle vous ne pourrez pas déchiffrer
-                le secret reçu.
+                {t("requestCreated.saveKeyWarning")}
               </div>
               <div className="field">
-                <label>Lien à transmettre au destinataire</label>
+                <label>{t("requestCreated.linkLabel")}</label>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input
                     readOnly
@@ -180,12 +180,12 @@ export default function SecretRequestCreateDialog({
                     onClick={() => copy(created.requestUrl)}
                     className="btn btn-ghost btn-sm"
                   >
-                    Copier
+                    {t("requestCreated.copyBtn")}
                   </button>
                 </div>
               </div>
               <div className="field">
-                <label>Clé privée (à conserver)</label>
+                <label>{t("requestCreated.privateKeyLabel")}</label>
                 <textarea
                   readOnly
                   rows={4}
@@ -207,7 +207,7 @@ export default function SecretRequestCreateDialog({
                     onClick={() => copy(created.privateKey)}
                     className="btn btn-ghost btn-sm"
                   >
-                    Copier la clé
+                    {t("requestCreated.copyKeyBtn")}
                   </button>
                   <button
                     type="button"
@@ -216,12 +216,12 @@ export default function SecretRequestCreateDialog({
                     className="btn btn-primary btn-sm"
                   >
                     {savedToVault
-                      ? "✓ Sauvegardée dans mon coffre"
+                      ? t("requestCreated.savedToVault")
                       : savingToVault
-                        ? "Sauvegarde…"
+                        ? t("requestCreated.savingBtn")
                         : (
                           <>
-                            <RiSaveLine size={14} aria-hidden /> Sauvegarder dans mon coffre
+                            <RiSaveLine size={14} aria-hidden /> {t("requestCreated.saveToVaultBtn")}
                           </>
                         )}
                   </button>
@@ -239,56 +239,52 @@ export default function SecretRequestCreateDialog({
                   onClick={done}
                   className="btn btn-primary"
                 >
-                  Terminé
+                  {t("requestCreated.doneBtn")}
                 </button>
               </div>
             </>
           ) : (
             <form onSubmit={onSubmit} className="flex flex-col gap-3">
               <div className="field">
-                <label>Label *</label>
+                <label>{t("createRequestDialog.labelLabel")}</label>
                 <input
                   required
                   autoFocus
                   maxLength={200}
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
-                  placeholder="Clé API Stripe production"
                   className="input"
                 />
               </div>
 
               <div className="field">
-                <label>Description (optionnelle)</label>
+                <label>{t("createRequestDialog.descriptionLabel")}</label>
                 <textarea
                   rows={2}
                   maxLength={500}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Merci de coller votre clé sk_live_..."
                   className="input"
                   style={{ resize: "vertical" }}
                 />
               </div>
 
               <div className="field">
-                <label>Email du destinataire (optionnel)</label>
+                <label>{t("createRequestDialog.recipientLabel")}</label>
                 <input
                   type="email"
                   value={recipientEmail}
                   onChange={(e) => setRecipientEmail(e.target.value)}
-                  placeholder="client@exemple.com"
                   className="input"
                 />
                 <div className="help" style={{ marginTop: 4, fontSize: 12 }}>
-                  Si rempli, un email avec le lien est envoyé automatiquement.
-                  Sinon copie manuelle après création.
+                  {t("createRequestDialog.recipientHint")}
                 </div>
               </div>
 
               <div className="form-row">
                 <div className="field" style={{ flex: 1 }}>
-                  <label>Organisation *</label>
+                  <label>{t("createRequestDialog.orgLabel")}</label>
                   <select
                     required
                     value={orgId}
@@ -303,13 +299,13 @@ export default function SecretRequestCreateDialog({
                   </select>
                 </div>
                 <div className="field" style={{ flex: 1 }}>
-                  <label>Projet (optionnel)</label>
+                  <label>{t("createRequestDialog.projectLabel")}</label>
                   <select
                     value={projectId}
                     onChange={(e) => setProjectId(e.target.value)}
                     className="select"
                   >
-                    <option value="">— Aucun —</option>
+                    <option value="">{t("createRequestDialog.noneProject")}</option>
                     {projects.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}
@@ -322,7 +318,7 @@ export default function SecretRequestCreateDialog({
               {projectId && (
                 <div className="form-row">
                   <div className="field" style={{ flex: 1 }}>
-                    <label>Environnement (pour import auto)</label>
+                    <label>{t("createRequestDialog.envLabel")}</label>
                     <input
                       maxLength={100}
                       value={environmentName}
@@ -332,7 +328,7 @@ export default function SecretRequestCreateDialog({
                     />
                   </div>
                   <div className="field" style={{ flex: 1 }}>
-                    <label>Clé .env</label>
+                    <label>{t("createRequestDialog.keyLabel")}</label>
                     <input
                       value={secretKey}
                       onChange={(e) =>
@@ -360,14 +356,14 @@ export default function SecretRequestCreateDialog({
                   onClick={onClose}
                   className="btn btn-ghost btn-sm"
                 >
-                  Annuler
+                  {t("createRequestDialog.cancelBtn")}
                 </button>
                 <button
                   type="submit"
                   disabled={pending || !label || !orgId}
                   className="btn btn-primary btn-sm"
                 >
-                  {pending ? "Création…" : "Créer la demande"}
+                  {pending ? t("createRequestDialog.creatingBtn") : t("createRequestDialog.submitBtn")}
                 </button>
               </div>
             </form>

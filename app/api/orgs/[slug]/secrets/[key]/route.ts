@@ -42,7 +42,7 @@ export async function GET(req: Request, { params }: Params) {
 
 export async function DELETE(req: Request, { params }: Params) {
   const { slug, key } = await params;
-  const access = await requireOrgMember(slug, "ADMIN");
+  const access = await requireOrgMember(slug, "ADMIN_DEV");
   if ("error" in access) return access.error;
 
   const existing = await prisma.orgSecret.findUnique({

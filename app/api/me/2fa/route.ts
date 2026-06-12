@@ -85,6 +85,11 @@ export async function DELETE(req: Request) {
   }
 
   // Désactivation : on efface tous les champs 2FA + backup codes.
+  // #5 — invalide les sessions ANTÉRIEURES à la session courante
+  // (sessionsValidFrom = loginAt courant) : coupe une éventuelle session
+  // volée plus ancienne sans déconnecter l'utilisateur qui fait l'action.
+  // loginAt null (token legacy) → fallback now() ; ce token-là n'est de toute
+  // façon pas soumis au check (loginAt null) et expirera sous 8h.
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -93,6 +98,7 @@ export async function DELETE(req: Request) {
       twoFactorIv: null,
       twoFactorTag: null,
       backupCodes: [],
+      sessionsValidFrom: new Date(user.loginAt ?? Date.now()),
     },
   });
 

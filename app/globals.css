@@ -485,6 +485,27 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
   padding: 24px 26px;
   margin-bottom: 18px;
 }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Variante : titre HORS de la carte blanche, carte = contenu + action à droite. */
+.settings-block { margin-bottom: 18px; }
+.settings-block-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 16px; font-weight: 600; margin: 0 0 10px;
+}
+.settings-block-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 22px;
+}
+/* Ligne : statut à gauche, bouton(s) d'action à droite. */
+.settings-block-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  flex-wrap: wrap;
+}
+.settings-block-actions { display: flex; align-items: center; gap: 8px; }
 .settings-section-title {
   display: flex; align-items: center; gap: 10px;
   font-size: 16px; font-weight: 600; margin: 0 0 4px;
@@ -551,6 +572,7 @@ h1.page-title svg { color: var(--accent); flex-shrink: 0; }
 .role-owner { background: var(--accent); color: #ffffff; }
 .role-admin { background: var(--accent-bg); color: #6a4c14; }
 .role-dev { background: #e3f2fd; color: #1565c0; }
+.role-admin_dev { background: #e6f4ea; color: #1b5e20; }
 .role-editor { background: var(--accent-bg); color: #6a4c14; }
 .role-member { background: var(--code-bg); color: var(--muted); }
 .role-viewer { background: var(--code-bg); color: var(--muted); }

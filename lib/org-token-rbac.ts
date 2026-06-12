@@ -10,6 +10,7 @@
 // Les MEMBER ne peuvent rien (pas de visibilité sur l'onglet Tokens).
 
 import type { OrgRole, OrgTokenScope } from "@prisma/client";
+import { hasDevPrivileges } from "./roles";
 
 /** Constraintes appliquées aux tokens créés par un OrgDEV. */
 export const DEV_TOKEN_CONSTRAINTS = {
@@ -27,7 +28,7 @@ export type OrgTokenAccessLevel = "admin" | "dev" | "denied";
 /** Détermine le niveau d'accès aux fonctionnalités OrgToken pour un rôle. */
 export function orgTokenAccessLevel(role: OrgRole): OrgTokenAccessLevel {
   if (role === "OWNER" || role === "ADMIN") return "admin";
-  if (role === "DEV") return "dev";
+  if (hasDevPrivileges(role)) return "dev";
   return "denied";
 }
 

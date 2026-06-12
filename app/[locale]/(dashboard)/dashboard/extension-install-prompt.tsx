@@ -12,6 +12,7 @@
 //   - Si rien apres ~3s, on assume que l'extension n'est pas installee.
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { RiDownload2Line, RiPuzzle2Line } from "@remixicon/react";
 
 type Status = "checking" | "installed" | "not_installed";
@@ -20,6 +21,7 @@ const POLL_INTERVAL_MS = 500;
 const POLL_MAX_ATTEMPTS = 6; // ~3s
 
 export default function ExtensionInstallPrompt() {
+  const t = useTranslations("dashboard.extension");
   const [status, setStatus] = useState<Status>("checking");
   const [version, setVersion] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -74,7 +76,7 @@ export default function ExtensionInstallPrompt() {
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
           <RiPuzzle2Line size={13} aria-hidden />
-          Extension{version ? ` v${version}` : ""} installée
+          {t("installed", { version: version ? ` v${version}` : "" })}
         </span>
         {hasUpdate && (
           <button
@@ -91,7 +93,7 @@ export default function ExtensionInstallPrompt() {
               cursor: "pointer",
             }}
           >
-            v{EXTENSION_VERSION} disponible
+            {t("updateAvailable", { version: EXTENSION_VERSION })}
           </button>
         )}
       </span>
@@ -107,7 +109,7 @@ export default function ExtensionInstallPrompt() {
         onClick={() => setOpen(true)}
         className="btn btn-ghost"
       >
-        <RiPuzzle2Line size={14} aria-hidden /> Installer l&apos;extension
+        <RiPuzzle2Line size={14} aria-hidden /> {t("installBtn")}
       </button>
       {open && <InstallModal onClose={() => setOpen(false)} />}
     </>
@@ -148,16 +150,17 @@ function detectBrowser(): Browser {
 }
 
 function InstallModal({ onClose }: { onClose: () => void }) {
+  const t = useTranslations("dashboard.extension");
   const browser = detectBrowser();
   const isChrome = browser === "chrome";
   const isFirefox = browser === "firefox";
   const zipUrl = downloadUrl(browser);
 
   const title = isChrome
-    ? "Extension Chrome"
+    ? t("chromeTitle")
     : isFirefox
-      ? "Extension Firefox"
-      : "Extension navigateur";
+      ? t("firefoxTitle")
+      : t("genericTitle");
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
@@ -171,7 +174,7 @@ function InstallModal({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("closeLabel")}
           >
             ✕
           </button>
@@ -180,7 +183,7 @@ function InstallModal({ onClose }: { onClose: () => void }) {
         <div className="dialog-body">
           <section>
             <p style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
-              L&apos;extension Physalis te permet de :
+              {t("featureIntro")}
             </p>
             <ul
               style={{
@@ -190,18 +193,9 @@ function InstallModal({ onClose }: { onClose: () => void }) {
                 lineHeight: 1.7,
               }}
             >
-              <li>
-                <strong>Auto-remplir</strong> les credentials sur les sites
-                des Services et Comptes accessibles depuis tes projets
-              </li>
-              <li>
-                <strong>Sauvegarder automatiquement</strong> un nouveau
-                credential dans ton coffre quand tu te connectes à un site
-              </li>
-              <li>
-                Accéder en un clic à tes credentials du coffre personnel et
-                des coffres d&apos;équipe filtrés par domaine
-              </li>
+              <li>{t.rich("feature1", { bold: (c) => <strong>{c}</strong> })}</li>
+              <li>{t.rich("feature2", { bold: (c) => <strong>{c}</strong> })}</li>
+              <li>{t("feature3")}</li>
             </ul>
           </section>
 
@@ -210,7 +204,7 @@ function InstallModal({ onClose }: { onClose: () => void }) {
               className="section-title"
               style={{ fontSize: 14, marginBottom: 10 }}
             >
-              Installation
+              {t("installTitle")}
             </h3>
             <ol
               style={{
@@ -220,67 +214,37 @@ function InstallModal({ onClose }: { onClose: () => void }) {
                 lineHeight: 1.9,
               }}
             >
-              <li>Télécharge l&apos;archive ci-dessous.</li>
+              <li>{t("step1Download")}</li>
               {isChrome && (
                 <>
                   <li>
-                    Ouvre{" "}
-                    <a
-                      href="chrome://extensions/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="code-mono text-accent"
-                    >
-                      chrome://extensions/
-                    </a>{" "}
-                    et active <strong>Mode développeur</strong> (interrupteur
-                    en haut à droite).
+                    {t.rich("stepChromeDevMode", {
+                      bold: (c) => <strong>{c}</strong>,
+                    })}
                   </li>
                   <li>
-                    Clique sur{" "}
-                    <strong>Charger l&apos;extension non empaquetée</strong>{" "}
-                    et sélectionne le dossier décompressé, ou glisse le zip
-                    sur la fenêtre.
+                    {t.rich("stepChromeLoad", {
+                      bold: (c) => <strong>{c}</strong>,
+                    })}
                   </li>
                 </>
               )}
               {isFirefox && (
                 <>
+                  <li>{t("stepFirefoxOpen")}</li>
                   <li>
-                    Ouvre{" "}
-                    <a
-                      href="about:debugging#/runtime/this-firefox"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="code-mono text-accent"
-                    >
-                      about:debugging#/runtime/this-firefox
-                    </a>
-                    .
-                  </li>
-                  <li>
-                    Clique sur{" "}
-                    <strong>
-                      Charger un module complémentaire temporaire
-                    </strong>{" "}
-                    et sélectionne le fichier{" "}
-                    <code className="code-mono">manifest.json</code> du
-                    dossier décompressé.
+                    {t.rich("stepFirefoxLoad", {
+                      bold: (c) => <strong>{c}</strong>,
+                      code: (c) => <code className="code-mono">{c}</code>,
+                    })}
                   </li>
                   <li className="text-muted" style={{ fontSize: 12 }}>
-                    Note : sur Firefox, l&apos;installation temporaire est
-                    réinitialisée au prochain redémarrage. Pour une
-                    installation permanente, attendre la publication sur
-                    addons.mozilla.org.
+                    {t("stepFirefoxNote")}
                   </li>
                 </>
               )}
               {!isChrome && !isFirefox && (
-                <li>
-                  L&apos;extension n&apos;est disponible que pour Chrome
-                  (et navigateurs basés sur Chromium) et Firefox pour le
-                  moment.
-                </li>
+                <li>{t("stepOther")}</li>
               )}
             </ol>
 
@@ -291,8 +255,11 @@ function InstallModal({ onClose }: { onClose: () => void }) {
                 className="btn btn-primary"
                 style={{ marginTop: 16, alignSelf: "flex-start" }}
               >
-                <RiDownload2Line size={14} aria-hidden /> Télécharger l&apos;extension v{EXTENSION_VERSION}{" "}
-                ({isChrome ? "Chrome" : "Firefox"}, .zip)
+                <RiDownload2Line size={14} aria-hidden />{" "}
+                {t("downloadBtn", {
+                  version: EXTENSION_VERSION,
+                  browser: isChrome ? "Chrome" : "Firefox",
+                })}
               </a>
             )}
           </section>
@@ -302,18 +269,10 @@ function InstallModal({ onClose }: { onClose: () => void }) {
               className="section-title"
               style={{ fontSize: 14, marginBottom: 6 }}
             >
-              Astuce
+              {t("tipTitle")}
             </h3>
             <p className="help" style={{ margin: 0, lineHeight: 1.8 }}>
-              Pour épingler l&apos;extension à la barre d&apos;outils :
-              <br />
-              clique sur l&apos;icône <strong>🧩 Extensions</strong> dans la
-              barre d&apos;outils du navigateur,
-              <br />
-              puis sur l&apos;icône <strong>📌 épingle</strong> à côté de
-              Physalis.
-              <br />
-              L&apos;icône Physalis sera alors toujours visible.
+              {t.rich("tipContent", { bold: (c) => <strong>{c}</strong> })}
             </p>
           </section>
         </div>
@@ -324,7 +283,7 @@ function InstallModal({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="btn btn-primary btn-sm"
           >
-            Fermer
+            {t("closeBtn")}
           </button>
         </div>
       </div>

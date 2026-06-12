@@ -1,15 +1,12 @@
-// Layout commun aux pages /docs/* : sidebar gauche avec la liste des
-// catégories (lue depuis docs/documentation/*.md), contenu à droite.
-//
-// La layout est un Server Component (lecture filesystem) ; la nav active
-// est gérée par un sous-composant client (DocsSidebarNav).
-
 import type { ReactNode } from "react";
 import { listDocPages } from "@/lib/docs";
 import DocsSidebar from "./docs-sidebar";
 
-export default async function DocsLayout({ children }: { children: ReactNode }) {
-  const pages = await listDocPages();
+type Props = { children: ReactNode; params: Promise<{ locale: string }> };
+
+export default async function DocsLayout({ children, params }: Props) {
+  const { locale } = await params;
+  const pages = await listDocPages(locale);
   return (
     <div className="page">
       <div className="page-content docs-shell">

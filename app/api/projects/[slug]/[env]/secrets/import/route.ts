@@ -183,7 +183,7 @@ export async function POST(req: Request, { params }: Params) {
         select: { id: true },
       });
       created++;
-    } catch (_err) {
+    } catch {
       // Ne JAMAIS echo la valeur dans le rapport d'erreur.
       failed.push({ key: v.key, reason: "Creation echouee" });
     }
@@ -210,7 +210,7 @@ export async function POST(req: Request, { params }: Params) {
         });
       });
       updated++;
-    } catch (_err) {
+    } catch {
       failed.push({ key: v.key, reason: "Mise a jour echouee" });
     }
   }

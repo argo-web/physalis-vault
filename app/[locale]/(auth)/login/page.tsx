@@ -1,8 +1,10 @@
 import { Suspense } from "react";
 import Image from "next/image";
+import { getTranslations } from "next-intl/server";
 import LoginForm from "./login-form";
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const t = await getTranslations("auth.login");
   const allowRegistration = process.env.ALLOW_REGISTRATION === "true";
   return (
     <div className="login-card">
@@ -17,7 +19,7 @@ export default function LoginPage() {
         />
         <div className="login-brand-text">
           <div className="login-brand-name">Physalis</div>
-          <div className="login-brand-tag">Connexion</div>
+          <div className="login-brand-tag">{t("pageTag")}</div>
         </div>
       </div>
       <Suspense fallback={null}>

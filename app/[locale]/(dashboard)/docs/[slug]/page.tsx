@@ -1,32 +1,28 @@
-// /docs/[slug] — rend une page markdown depuis docs/documentation/<slug>.md.
-//
-// Le HTML est généré server-side avec marked (source de confiance, on contrôle
-// le contenu en repo) et injecté via dangerouslySetInnerHTML. Les styles sont
-// appliqués par .docs-prose (cf. globals.css).
-
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { RiArrowLeftLine } from "@remixicon/react";
-import { getDocPage, listDocPages } from "@/lib/docs";
+import { getDocPage } from "@/lib/docs";
 import { DocIcon } from "@/lib/docs-icons";
 
-type Params = { params: Promise<{ slug: string }> };
+type Params = { params: Promise<{ locale: string; slug: string }> };
 
-export async function generateStaticParams() {
-  const pages = await listDocPages();
-  return pages.map((p) => ({ slug: p.slug }));
-}
+// Rendu dynamique (comme la liste et tout le dashboard) : la page vit sous le
+// layout `(dashboard)` qui utilise la session → pas de pré-génération statique
+// possible. Un `generateStaticParams` ici déclenchait `DYNAMIC_SERVER_USAGE`
+// (getTranslations lit les headers sans setRequestLocale) → 500.
 
 export default async function DocsPage({ params }: Params) {
-  const { slug } = await params;
-  const page = await getDocPage(slug);
+  const { locale, slug } = await params;
+  const t = await getTranslations("docs");
+  const page = await getDocPage(slug, locale);
   if (!page) notFound();
 
   return (
     <>
       <Link href="/docs" className="docs-backlink">
         <RiArrowLeftLine size={14} aria-hidden />
-        Toute la documentation
+        {t("backLink")}
       </Link>
       <div className="docs-page-eyebrow">
         <span className="docs-page-icon">

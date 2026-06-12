@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import {
   RiFolderOpenLine,
   RiGridLine,
@@ -10,8 +11,8 @@ import {
   RiStarFill,
 } from "@remixicon/react";
 import { generatePassword } from "@/lib/generate-password";
-import { estimateStrength } from "@/lib/password-strength";
-import { computeDuplicates } from "@/lib/vault-duplicates";
+import { estimateStrength, strengthMeta } from "@/lib/password-strength";
+import { computeDuplicates, extractDomain } from "@/lib/vault-duplicates";
 import ExtensionBanner from "./extension-banner";
 import RenameCollectionDialog from "../rename-collection-dialog";
 
@@ -22,6 +23,7 @@ type VaultEntryListItem = {
   username: string | null;
   tags: string[];
   favorite: boolean;
+  passwordStrength: number | null;
   hasTotpSecret: boolean;
   collectionId: string | null;
   createdAt: string;
@@ -37,8 +39,15 @@ type VaultCollection = {
 
 // "all" = toutes les entries, "favorites" = favoris seulement,
 // "none" = entries sans collection, "duplicates" = entries en doublon
-// (même domaine + même login), "<id>" = entries d'une collection précise.
-type CollectionFilter = "all" | "favorites" | "none" | "duplicates" | string;
+// (même domaine + même login), "weak" = mots de passe faibles (score 0-1),
+// "<id>" = entries d'une collection précise.
+type CollectionFilter =
+  | "all"
+  | "favorites"
+  | "none"
+  | "duplicates"
+  | "weak"
+  | string;
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -47,26 +56,86 @@ function initials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const diff = Date.now() - t;
-  if (diff < 0) return "à l'instant";
+// Favicon du domaine (API Google), qui remplit son conteneur (liste ou grille).
+// Fallback sur les initiales si l'URL est absente/invalide ou si le favicon ne
+// charge pas (onError). L'échec est mémorisé PAR domaine : éditer l'URL d'une
+// entrée re-tente automatiquement le nouveau favicon.
+function EntryIcon({ name, url }: { name: string; url: string | null }) {
+  const domain = extractDomain(url);
+  const [failedDomain, setFailedDomain] = useState<string | null>(null);
+  if (domain && failedDomain !== domain) {
+    return (
+      // favicon externe arbitraire : next/image n'apporte rien et imposerait
+      // de whitelister le domaine — <img> est volontaire ici.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+        alt=""
+        loading="lazy"
+        onError={() => setFailedDomain(domain)}
+        style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: "inherit" }}
+      />
+    );
+  }
+  return <>{initials(name)}</>;
+}
+
+// Barre de force d'un score déjà stocké (0-4) — discrète (4px), couleur selon
+// le niveau, tooltip "Force : <label>". Rien si pas de mot de passe (null).
+function StrengthBar({ score, label }: { score: number | null; label: string }) {
+  if (score === null || score === undefined) return null;
+  const meta = strengthMeta(score);
+  return (
+    <span
+      title={`${label} : ${meta.label}`}
+      aria-label={`${label} : ${meta.label}`}
+      style={{
+        display: "inline-flex",
+        gap: 2,
+        height: 4,
+        width: 56,
+        borderRadius: 2,
+        overflow: "hidden",
+        verticalAlign: "middle",
+      }}
+    >
+      {[0, 1, 2, 3, 4].map((i) => (
+        <span
+          key={i}
+          style={{
+            flex: 1,
+            background:
+              i <= score ? meta.color : "var(--surface-hover, rgba(255,255,255,0.08))",
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+type VaultT = ReturnType<typeof useTranslations<"vault">>;
+
+function relativeTime(iso: string, t: VaultT): string {
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return "";
+  const diff = Date.now() - ts;
+  if (diff < 0) return t("relTime.justNow");
   const sec = Math.floor(diff / 1000);
-  if (sec < 60) return "à l'instant";
+  if (sec < 60) return t("relTime.justNow");
   const min = Math.floor(sec / 60);
-  if (min < 60) return `il y a ${min} min`;
+  if (min < 60) return t("relTime.minutesAgo", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `il y a ${hr} h`;
+  if (hr < 24) return t("relTime.hoursAgo", { n: hr });
   const day = Math.floor(hr / 24);
-  if (day < 30) return `il y a ${day} j`;
+  if (day < 30) return t("relTime.daysAgo", { n: day });
   const month = Math.floor(day / 30);
-  if (month < 12) return `il y a ${month} mois`;
+  if (month < 12) return t("relTime.monthsAgo", { n: month });
   const year = Math.floor(day / 365);
-  return `il y a ${year} an${year > 1 ? "s" : ""}`;
+  return t("relTime.yearsAgo", { n: year });
 }
 
 export default function VaultPanel() {
+  const t = useTranslations("vault");
   const [entries, setEntries] = useState<VaultEntryListItem[] | null>(null);
   const [collections, setCollections] = useState<VaultCollection[]>([]);
   const [allTagsList, setAllTagsList] = useState<string[]>([]);
@@ -74,6 +143,7 @@ export default function VaultPanel() {
   const [favoritesCount, setFavoritesCount] = useState(0);
   const [uncategorizedCount, setUncategorizedCount] = useState(0);
   const [duplicateIds, setDuplicateIds] = useState<Set<string>>(new Set());
+  const [weakCount, setWeakCount] = useState(0);
   const [filter, setFilter] = useState<CollectionFilter>("all");
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
@@ -86,7 +156,9 @@ export default function VaultPanel() {
   const [moving, setMoving] = useState<VaultEntryListItem | null>(null);
   const [creatingCollection, setCreatingCollection] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [sort, setSort] = useState<"name" | "recent" | "favorite_first">("name");
+  const [sort, setSort] = useState<
+    "name" | "recent" | "favorite_first" | "strength"
+  >("name");
   // Vue liste / grille — préférence persistée dans localStorage. SSR-safe :
   // l'init renvoie "list" (default) puis on se synchronise dans un effect.
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -113,15 +185,19 @@ export default function VaultPanel() {
     const set = new Set<string>();
     let favCount = 0;
     let uncatCount = 0;
+    let weak = 0;
     for (const e of data.entries) {
-      for (const t of e.tags) set.add(t);
+      for (const tag of e.tags) set.add(tag);
       if (e.favorite) favCount++;
       if (e.collectionId === null) uncatCount++;
+      // Faible = score 0 ou 1 (entries sans mot de passe exclues).
+      if (e.passwordStrength !== null && e.passwordStrength <= 1) weak++;
     }
     setAllTagsList(Array.from(set).sort());
     setTotalCount(data.entries.length);
     setFavoritesCount(favCount);
     setUncategorizedCount(uncatCount);
+    setWeakCount(weak);
     setDuplicateIds(computeDuplicates(data.entries));
   }, []);
 
@@ -137,7 +213,11 @@ export default function VaultPanel() {
     const params = new URLSearchParams();
     if (filter === "favorites") params.set("favorite", "true");
     else if (filter === "none") params.set("collectionId", "none");
-    else if (filter !== "all" && filter !== "duplicates") {
+    else if (
+      filter !== "all" &&
+      filter !== "duplicates" &&
+      filter !== "weak"
+    ) {
       params.set("collectionId", filter);
     }
     if (activeTag) params.set("tag", activeTag);
@@ -150,11 +230,16 @@ export default function VaultPanel() {
       return;
     }
     const data = (await res.json()) as { entries: VaultEntryListItem[] };
-    // Filtre "doublons" appliqué client-side (notion non connue du serveur).
+    // Filtres "doublons" et "faibles" appliqués client-side (notions non
+    // connues du serveur ; le score faible = 0-1).
     const filtered =
       filter === "duplicates"
         ? data.entries.filter((e) => duplicateIds.has(e.id))
-        : data.entries;
+        : filter === "weak"
+          ? data.entries.filter(
+              (e) => e.passwordStrength !== null && e.passwordStrength <= 1,
+            )
+          : data.entries;
     setEntries(filtered);
   }, [filter, activeTag, search, sort, duplicateIds]);
 
@@ -177,7 +262,7 @@ export default function VaultPanel() {
       const data = (await res.json().catch(() => null)) as
         | { error?: string }
         | null;
-      setError(data?.error ?? "Création impossible.");
+      setError(data?.error ?? t("createCollection.error"));
       return false;
     }
     setCreatingCollection(false);
@@ -188,7 +273,7 @@ export default function VaultPanel() {
   async function removeCollection(c: VaultCollection) {
     if (
       !confirm(
-        `Supprimer la collection « ${c.name} » ? Les ${c.entryCount} entrée(s) reviendront dans « Sans catégorie ».`,
+        t("deleteCollection.confirm", { name: c.name, count: c.entryCount }),
       )
     ) {
       return;
@@ -197,7 +282,7 @@ export default function VaultPanel() {
       method: "DELETE",
     });
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteCollection.error"));
       return;
     }
     if (filter === c.id) setFilter("all");
@@ -221,7 +306,7 @@ export default function VaultPanel() {
     }
     const res = await fetch(`/api/vault/entries/${id}`);
     if (!res.ok) {
-      setError("Impossible de révéler.");
+      setError(t("revealError"));
       return;
     }
     const data = (await res.json()) as { entry: { password: string | null } };
@@ -231,25 +316,25 @@ export default function VaultPanel() {
   async function copyToClipboard(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setError(`✓ ${label} copié`);
+      setError(t("copySuccess", { label }));
       setTimeout(() => setError(null), 1500);
     } catch {
-      setError("Copie impossible.");
+      setError(t("copyError"));
     }
   }
 
   async function copyPassword(id: string) {
     const res = await fetch(`/api/vault/entries/${id}`);
     if (!res.ok) {
-      setError("Impossible de récupérer.");
+      setError(t("revealError"));
       return;
     }
     const data = (await res.json()) as { entry: { password: string | null } };
     if (!data.entry.password) {
-      setError("Aucun mot de passe.");
+      setError(t("copyPasswordEmpty"));
       return;
     }
-    copyToClipboard(data.entry.password, "Mot de passe");
+    copyToClipboard(data.entry.password, t("copyPasswordBtn"));
   }
 
   async function toggleFavorite(entry: VaultEntryListItem) {
@@ -259,19 +344,19 @@ export default function VaultPanel() {
       body: JSON.stringify({ favorite: !entry.favorite }),
     });
     if (!res.ok) {
-      setError("Mise à jour impossible.");
+      setError(t("updateError"));
       return;
     }
     reload();
   }
 
   async function remove(entry: VaultEntryListItem) {
-    if (!confirm(`Supprimer "${entry.name}" ?`)) return;
+    if (!confirm(t("deleteConfirm", { name: entry.name }))) return;
     const res = await fetch(`/api/vault/entries/${entry.id}`, {
       method: "DELETE",
     });
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteError"));
       return;
     }
     setRevealed((r) => {
@@ -291,14 +376,14 @@ export default function VaultPanel() {
           active={filter === "all"}
           onClick={() => setFilter("all")}
           icon={<RiInboxArchiveLine size={16} aria-hidden />}
-          label="Toutes"
+          label={t("allEntries")}
           count={totalCount}
         />
         <SidebarItem
           active={filter === "favorites"}
           onClick={() => setFilter("favorites")}
           icon={<RiStarFill size={16} aria-hidden style={{ color: "var(--accent, #f59e0b)" }} />}
-          label="Favoris"
+          label={t("favorites")}
           count={favoritesCount}
         />
 
@@ -306,12 +391,12 @@ export default function VaultPanel() {
           className="cat-header"
           style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}
         >
-          <span>Collections</span>
+          <span>{t("collectionsTitle")}</span>
           <button
             type="button"
             onClick={() => setCreatingCollection(true)}
             className="btn btn-ghost btn-xs"
-            title="Nouvelle collection"
+            title={t("createCollectionBtn")}
             style={{ padding: "2px 6px" }}
           >
             +
@@ -329,7 +414,7 @@ export default function VaultPanel() {
 
         {collections.length === 0 && !creatingCollection ? (
           <p className="help" style={{ padding: "4px 8px", fontSize: 11 }}>
-            Aucune collection. Crée-en une pour organiser tes entrées.
+            {t("noCollections")}
           </p>
         ) : (
           collections.map((c) => (
@@ -351,7 +436,7 @@ export default function VaultPanel() {
             active={filter === "none"}
             onClick={() => setFilter("none")}
             icon={<RiInboxArchiveLine size={16} aria-hidden style={{ opacity: 0.5 }} />}
-            label="Sans catégorie"
+            label={t("noCategory")}
             count={uncategorizedCount}
             muted
           />
@@ -362,8 +447,19 @@ export default function VaultPanel() {
             active={filter === "duplicates"}
             onClick={() => setFilter("duplicates")}
             icon={<span style={{ fontSize: 14, lineHeight: 1 }}>⚠</span>}
-            label="Doublons"
+            label={t("duplicates")}
             count={duplicateIds.size}
+            warning
+          />
+        )}
+
+        {weakCount > 0 && (
+          <SidebarItem
+            active={filter === "weak"}
+            onClick={() => setFilter("weak")}
+            icon={<span style={{ fontSize: 13, lineHeight: 1 }}>🔓</span>}
+            label={t("weakPasswords")}
+            count={weakCount}
             warning
           />
         )}
@@ -378,7 +474,7 @@ export default function VaultPanel() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="🔍 Rechercher (nom / url / login)"
+              placeholder={t("searchPlaceholder")}
               className="input"
             />
           </div>
@@ -386,22 +482,23 @@ export default function VaultPanel() {
             value={sort}
             onChange={(e) => setSort(e.target.value as typeof sort)}
             className="select"
-            title="Trier les entrées"
+            title={t("sortTitle")}
             style={{ width: "auto", minWidth: 140 }}
           >
-            <option value="name">A → Z (favoris en haut)</option>
-            <option value="recent">Récemment modifié</option>
-            <option value="favorite_first">Favoris puis récents</option>
+            <option value="name">{t("sortByName")}</option>
+            <option value="recent">{t("sortByRecent")}</option>
+            <option value="favorite_first">{t("sortByFavorite")}</option>
+            <option value="strength">{t("sortByStrength")}</option>
           </select>
           <div
             role="group"
-            aria-label="Mode d'affichage"
+            aria-label={t("viewModeList")}
             style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}
           >
             <button
               type="button"
               onClick={() => toggleViewMode("list")}
-              title="Vue liste"
+              title={t("viewModeList")}
               aria-pressed={viewMode === "list"}
               className="btn btn-ghost"
               style={{
@@ -415,7 +512,7 @@ export default function VaultPanel() {
             <button
               type="button"
               onClick={() => toggleViewMode("grid")}
-              title="Vue grille"
+              title={t("viewModeGrid")}
               aria-pressed={viewMode === "grid"}
               className="btn btn-ghost"
               style={{
@@ -431,16 +528,16 @@ export default function VaultPanel() {
             type="button"
             onClick={() => setImporting(true)}
             className="btn btn-ghost"
-            title="Importer depuis Bitwarden, Chrome, etc."
+            title={t("importBtn")}
           >
-            Importer CSV
+            {t("importBtn")}
           </button>
           <button
             type="button"
             onClick={() => setAdding(true)}
             className="btn btn-primary"
           >
-            + Ajouter
+            {t("addBtn")}
           </button>
         </div>
 
@@ -506,7 +603,7 @@ export default function VaultPanel() {
                 delete copy[moving.id];
                 return copy;
               });
-              setError(`✓ Déplacé vers ${target}`);
+              setError(t("moveSuccess", { target }));
               setTimeout(() => setError(null), 2500);
               reload();
               reloadAllTags();
@@ -520,7 +617,7 @@ export default function VaultPanel() {
             onClose={() => setImporting(false)}
             onImported={(count) => {
               setImporting(false);
-              setError(`✓ ${count} entrée(s) importée(s)`);
+              setError(t("import.success", { count }));
               setTimeout(() => setError(null), 3000);
               reload();
               reloadAllTags();
@@ -589,7 +686,7 @@ export default function VaultPanel() {
                     <button
                       type="button"
                       onClick={() => toggleFavorite(e)}
-                      title={e.favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+                      title={e.favorite ? t("form.removeFavorite") : t("form.addFavorite")}
                       className={`star-btn ${e.favorite ? "active" : ""}`}
                     >
                       ★
@@ -605,7 +702,7 @@ export default function VaultPanel() {
                     )}
                   </div>
 
-                  {/* 48x48 initials circle centered */}
+                  {/* 48x48 favicon (fallback initiales) centré */}
                   <div
                     aria-hidden
                     style={{
@@ -620,9 +717,10 @@ export default function VaultPanel() {
                       fontSize: 16,
                       fontWeight: 600,
                       alignSelf: "center",
+                      overflow: "hidden",
                     }}
                   >
-                    {initials(e.name)}
+                    <EntryIcon name={e.name} url={e.url} />
                   </div>
 
                   {/* Name + domain */}
@@ -654,18 +752,23 @@ export default function VaultPanel() {
                     )}
                   </div>
 
+                  {e.passwordStrength !== null && (
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <StrengthBar score={e.passwordStrength} label={t("strength")} />
+                    </div>
+                  )}
+
                   {/* Badges 2FA + doublon */}
                   {(e.hasTotpSecret || duplicateIds.has(e.id)) && (
                     <div className="flex items-center gap-1 justify-center" style={{ flexWrap: "wrap" }}>
                       {e.hasTotpSecret && (
-                        <span className="chip" style={{ fontSize: 10 }} title="2FA">🔐 2FA</span>
+                        <span className="chip" style={{ fontSize: 10 }}>{t("form.twoFaBadge")}</span>
                       )}
                       {duplicateIds.has(e.id) && (
                         <button
                           type="button"
                           onClick={() => setFilter("duplicates")}
                           className="chip"
-                          title="Voir tous les doublons"
                           style={{
                             fontSize: 10,
                             background: "rgba(249, 115, 22, 0.15)",
@@ -675,7 +778,7 @@ export default function VaultPanel() {
                             fontFamily: "inherit",
                           }}
                         >
-                          ⚠ Doublon
+                          {t("form.duplicateBadge")}
                         </button>
                       )}
                     </div>
@@ -696,8 +799,8 @@ export default function VaultPanel() {
                     {e.username && (
                       <button
                         type="button"
-                        onClick={() => copyToClipboard(e.username!, "Login")}
-                        title="Copier le login"
+                        onClick={() => copyToClipboard(e.username!, t("copyLoginBtn"))}
+                        title={t("copyLoginBtn")}
                         className="btn btn-ghost btn-xs"
                         style={{ padding: "4px 8px" }}
                       >
@@ -707,7 +810,7 @@ export default function VaultPanel() {
                     <button
                       type="button"
                       onClick={() => copyPassword(e.id)}
-                      title="Copier le mot de passe"
+                      title={t("copyPasswordBtn")}
                       className="btn btn-ghost btn-xs"
                       style={{ padding: "4px 8px" }}
                     >
@@ -716,7 +819,7 @@ export default function VaultPanel() {
                     <button
                       type="button"
                       onClick={() => setEditing(e)}
-                      title="Modifier"
+                      title={t("editBtn")}
                       className="btn btn-ghost btn-xs"
                       style={{ padding: "4px 8px" }}
                     >
@@ -735,14 +838,14 @@ export default function VaultPanel() {
           <div className="row-list">
             {entries.map((e) => (
               <div key={e.id} className="row">
-                <div className="row-icon">{initials(e.name)}</div>
+                <div className="row-icon"><EntryIcon name={e.name} url={e.url} /></div>
                 <div className="row-info">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => toggleFavorite(e)}
                       title={
-                        e.favorite ? "Retirer des favoris" : "Ajouter aux favoris"
+                        e.favorite ? t("form.removeFavorite") : t("form.addFavorite")
                       }
                       className={`star-btn ${e.favorite ? "active" : ""}`}
                     >
@@ -754,16 +857,14 @@ export default function VaultPanel() {
                         <span
                           className="chip"
                           style={{ marginLeft: 6, fontSize: 10 }}
-                          title="Code 2FA configuré"
                         >
-                          🔐 2FA
+                          {t("form.twoFaBadge")}
                         </span>
                       )}
                       {duplicateIds.has(e.id) && (
                         <button
                           type="button"
                           onClick={() => setFilter("duplicates")}
-                          title="Cliquer pour voir tous les doublons"
                           className="chip"
                           style={{
                             marginLeft: 6,
@@ -775,7 +876,7 @@ export default function VaultPanel() {
                             fontFamily: "inherit",
                           }}
                         >
-                          ⚠ Doublon
+                          {t("form.duplicateBadge")}
                         </button>
                       )}
                     </div>
@@ -801,17 +902,18 @@ export default function VaultPanel() {
                         : "••••••••••••"}
                     </span>
                     <span className="text-muted" title={new Date(e.updatedAt).toLocaleString()}>
-                      {relativeTime(e.updatedAt)}
+                      {relativeTime(e.updatedAt, t)}
                     </span>
+                    <StrengthBar score={e.passwordStrength} label={t("strength")} />
                   </div>
                   {e.tags.length > 0 && (
                     <div
                       className="flex flex-wrap gap-1"
                       style={{ marginTop: 6 }}
                     >
-                      {e.tags.map((t) => (
-                        <span key={t} className="chip">
-                          {t}
+                      {e.tags.map((tag) => (
+                        <span key={tag} className="chip">
+                          {tag}
                         </span>
                       ))}
                     </div>
@@ -821,10 +923,10 @@ export default function VaultPanel() {
                   {e.username && (
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(e.username!, "Login")}
+                      onClick={() => copyToClipboard(e.username!, t("copyLoginBtn"))}
                       className="btn btn-ghost btn-xs"
                     >
-                      Copier login
+                      {t("copyLoginBtn")}
                     </button>
                   )}
                   <button
@@ -832,36 +934,36 @@ export default function VaultPanel() {
                     onClick={() => copyPassword(e.id)}
                     className="btn btn-ghost btn-xs"
                   >
-                    Copier mdp
+                    {t("copyPasswordBtn")}
                   </button>
                   <button
                     type="button"
                     onClick={() => reveal(e.id)}
                     className="btn btn-ghost btn-xs"
                   >
-                    {revealed[e.id] !== undefined ? "Masquer" : "Afficher"}
+                    {revealed[e.id] !== undefined ? t("hideBtn") : t("revealBtn")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditing(e)}
                     className="btn btn-ghost btn-xs"
                   >
-                    Modifier
+                    {t("editBtn")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setMoving(e)}
                     className="btn btn-ghost btn-xs"
-                    title="Déplacer vers une organisation ou un projet"
+                    title={t("moveBtn")}
                   >
-                    Déplacer
+                    {t("moveBtn")}
                   </button>
                   <button
                     type="button"
                     onClick={() => remove(e)}
                     className="btn btn-danger btn-xs"
                   >
-                    Supprimer
+                    {t("deleteBtn")}
                   </button>
                 </div>
               </div>
@@ -987,6 +1089,7 @@ function CreateCollectionInline({
   onCancel: () => void;
   onCreated: (name: string) => Promise<boolean>;
 }) {
+  const t = useTranslations("vault");
   const [name, setName] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -1011,7 +1114,7 @@ function CreateCollectionInline({
             onCancel();
           }
         }}
-        placeholder="Nom (puis Entrée)"
+        placeholder={t("createCollection.nameLabel")}
         className="input"
         style={{ fontSize: 12, padding: "4px 8px" }}
         disabled={pending}
@@ -1027,6 +1130,7 @@ function GridMoreMenu({
   onMove: () => void;
   onDelete: () => void;
 }) {
+  const t = useTranslations("vault");
   const [open, setOpen] = useState(false);
 
   // Click outside → close. Garde une dépendance simple (pas de ref complexe).
@@ -1046,7 +1150,7 @@ function GridMoreMenu({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Plus d'actions"
+        title={t("moveBtn")}
         aria-haspopup="menu"
         aria-expanded={open}
         className="btn btn-ghost btn-xs"
@@ -1081,7 +1185,7 @@ function GridMoreMenu({
             className="btn btn-ghost btn-sm"
             style={{ width: "100%", justifyContent: "flex-start", padding: "6px 10px" }}
           >
-            Déplacer…
+            {t("moveBtn")}
           </button>
           <button
             type="button"
@@ -1098,7 +1202,7 @@ function GridMoreMenu({
               color: "var(--danger, #ef4444)",
             }}
           >
-            Supprimer
+            {t("deleteBtn")}
           </button>
         </div>
       )}
@@ -1161,15 +1265,15 @@ function EmptyEntries({
   onAdd: () => void;
   onImport: () => void;
 }) {
+  const t = useTranslations("vault");
   // Coffre 100% vide → onboarding 3 cards (créer, importer, extension).
   if (totalCount === 0) {
     return (
       <div className="flex flex-col gap-3">
         <div className="empty-state" style={{ paddingBottom: 18 }}>
-          <div className="empty-state-title">Bienvenue dans ton coffre</div>
+          <div className="empty-state-title">{t("onboarding.welcomeTitle")}</div>
           <div style={{ marginTop: 6 }}>
-            Stocke ici tes credentials privés (Gmail perso, Netflix, etc.).
-            Aucun partage, visibles uniquement par toi.
+            {t("onboarding.welcomeDesc")}
           </div>
         </div>
         <div
@@ -1180,22 +1284,22 @@ function EmptyEntries({
           }}
         >
           <OnboardingCard
-            title="Créer une entrée"
-            description="Saisis manuellement ton premier mot de passe."
-            ctaLabel="+ Ajouter"
+            title={t("onboarding.createTitle")}
+            description={t("onboarding.createDesc")}
+            ctaLabel={t("addBtn")}
             onClick={onAdd}
             primary
           />
           <OnboardingCard
-            title="Importer depuis Bitwarden, Chrome…"
-            description="Migre ton coffre existant en quelques secondes (CSV)."
-            ctaLabel="Importer un CSV"
+            title={t("onboarding.importTitle")}
+            description={t("onboarding.importDesc")}
+            ctaLabel={t("importBtn")}
             onClick={onImport}
           />
           <OnboardingCard
-            title="Installe l'extension"
-            description="Auto-fill, génération, save-prompt sur tes sites."
-            ctaLabel="Voir les extensions"
+            title={t("onboarding.extensionTitle")}
+            description={t("onboarding.extensionDesc")}
+            ctaLabel={t("onboarding.extensionBtn")}
             onClick={() => window.open("/docs/extension", "_blank")}
           />
         </div>
@@ -1203,13 +1307,13 @@ function EmptyEntries({
     );
   }
 
-  let label = "Aucune entrée";
-  if (filter === "favorites") label = "Aucun favori pour l'instant";
-  else if (filter === "none") label = "Toutes tes entrées sont rangées 🎉";
-  else if (filter === "duplicates") label = "Aucun doublon détecté 🎉";
+  let label = t("emptyNoFilter");
+  if (filter === "favorites") label = t("emptyNoFavorites");
+  else if (filter === "none") label = t("emptyNoUncategorized");
+  else if (filter === "duplicates") label = t("emptyNoDuplicates");
   else if (filter !== "all") {
     const c = collections.find((c) => c.id === filter);
-    label = c ? `« ${c.name} » est vide` : "Aucune entrée";
+    label = c ? t("emptyCollection", { name: c.name }) : t("form.emptyCategoryHint");
   }
 
   return (
@@ -1272,6 +1376,7 @@ function EntryDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useTranslations("vault");
   const isEdit = Boolean(initial);
   const [name, setName] = useState(initial?.name ?? "");
   const [url, setUrl] = useState(initial?.url ?? "");
@@ -1311,18 +1416,18 @@ function EntryDialog({
   }
 
   function addTag() {
-    const t = tagInput.trim();
-    if (!t) return;
-    if (tags.includes(t)) {
+    const tag = tagInput.trim();
+    if (!tag) return;
+    if (tags.includes(tag)) {
       setTagInput("");
       return;
     }
-    setTags([...tags, t]);
+    setTags([...tags, tag]);
     setTagInput("");
   }
 
-  function removeTag(t: string) {
-    setTags(tags.filter((x) => x !== t));
+  function removeTag(tag: string) {
+    setTags(tags.filter((x) => x !== tag));
   }
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -1357,7 +1462,7 @@ function EntryDialog({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Enregistrement impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       onSaved();
@@ -1369,13 +1474,13 @@ function EntryDialog({
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">
-            {isEdit ? "Modifier l'entrée" : "Nouvelle entrée"}
+            {isEdit ? t("form.editTitle") : t("form.createTitle")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("form.closeLabel")}
           >
             ✕
           </button>
@@ -1384,7 +1489,7 @@ function EntryDialog({
         <form onSubmit={submit}>
           <div className="dialog-body">
             <div className="field">
-              <label>Nom *</label>
+              <label>{t("form.nameLabel")} *</label>
               <input
                 required
                 autoFocus
@@ -1395,7 +1500,7 @@ function EntryDialog({
               />
             </div>
             <div className="field">
-              <label>URL</label>
+              <label>{t("form.urlLabel")}</label>
               <input
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
@@ -1404,7 +1509,7 @@ function EntryDialog({
               />
             </div>
             <div className="field">
-              <label>Login / Email</label>
+              <label>{t("form.usernameLabel")}</label>
               <input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -1422,7 +1527,7 @@ function EntryDialog({
                   gap: 8,
                 }}
               >
-                <label style={{ margin: 0 }}>Mot de passe</label>
+                <label style={{ margin: 0 }}>{t("form.passwordLabel")}</label>
                 <div className="flex items-center gap-2">
                   {isEdit && !pwdLoaded && (
                     <button
@@ -1430,23 +1535,23 @@ function EntryDialog({
                       onClick={loadCurrentSecrets}
                       className="btn btn-ghost btn-xs"
                     >
-                      Charger l&apos;actuel
+                      {t("form.loadCurrentBtn")}
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={generate}
-                    title="Générer (24 chars base64url)"
+                    title={t("generator.refreshBtn")}
                     className="btn btn-ghost btn-xs"
                   >
-                    <RiShuffleLine size={12} aria-hidden /> Générer
+                    <RiShuffleLine size={12} aria-hidden /> {t("generator.refreshBtn")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     className="btn btn-ghost btn-xs"
                   >
-                    {showPassword ? "Masquer" : "Voir"}
+                    {showPassword ? t("hideBtn") : t("revealBtn")}
                   </button>
                 </div>
               </div>
@@ -1458,7 +1563,7 @@ function EntryDialog({
                   setPwdLoaded(true);
                 }}
                 placeholder={
-                  isEdit && !pwdLoaded ? "(inchangé)" : "••••••••••••"
+                  isEdit && !pwdLoaded ? t("form.unchanged") : "••••••••••••"
                 }
                 className="input input-mono"
               />
@@ -1476,7 +1581,7 @@ function EntryDialog({
                   gap: 8,
                 }}
               >
-                <label style={{ margin: 0 }}>Code 2FA (TOTP)</label>
+                <label style={{ margin: 0 }}>{t("form.totpLabel")}</label>
                 <div className="flex items-center gap-2">
                   {isEdit && !totpLoaded && (
                     <button
@@ -1484,7 +1589,7 @@ function EntryDialog({
                       onClick={loadCurrentSecrets}
                       className="btn btn-ghost btn-xs"
                     >
-                      Charger l&apos;actuel
+                      {t("form.loadCurrentBtn")}
                     </button>
                   )}
                   <button
@@ -1492,7 +1597,7 @@ function EntryDialog({
                     onClick={() => setShowTotpSecret((v) => !v)}
                     className="btn btn-ghost btn-xs"
                   >
-                    {showTotpSecret ? "Masquer" : "Voir"}
+                    {showTotpSecret ? t("hideBtn") : t("revealBtn")}
                   </button>
                 </div>
               </div>
@@ -1505,27 +1610,24 @@ function EntryDialog({
                 }}
                 placeholder={
                   isEdit && !totpLoaded
-                    ? "(inchangé)"
-                    : "Secret base32 ou otpauth://…"
+                    ? t("form.unchanged")
+                    : t("form.totpPlaceholder")
                 }
                 className="input input-mono"
               />
               <div className="help" style={{ marginTop: 4 }}>
-                Optionnel. Colle le secret base32 affiché à côté du QR code,
-                ou l&apos;URL <code className="code-mono">otpauth://</code>{" "}
-                complète. L&apos;extension affichera le code 6 chiffres en
-                temps réel.
+                {t("form.totpHint")}
               </div>
             </div>
 
             <div className="field">
-              <label>Collection</label>
+              <label>{t("form.collectionLabel")}</label>
               <select
                 value={collectionId}
                 onChange={(e) => setCollectionId(e.target.value)}
                 className="select"
               >
-                <option value="">— Sans catégorie —</option>
+                <option value="">{t("form.noneCollection")}</option>
                 {collections.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -1537,16 +1639,16 @@ function EntryDialog({
             <div className="field">
               <label>Tags</label>
               <div className="flex flex-wrap gap-1.5 items-center">
-                {tags.map((t) => (
+                {tags.map((tag) => (
                   <span
-                    key={t}
+                    key={tag}
                     className="chip"
                     style={{ display: "inline-flex", gap: 4 }}
                   >
-                    {t}
+                    {tag}
                     <button
                       type="button"
-                      onClick={() => removeTag(t)}
+                      onClick={() => removeTag(tag)}
                       className="text-muted"
                       style={{
                         background: "none",
@@ -1555,7 +1657,7 @@ function EntryDialog({
                         padding: 0,
                         fontSize: 12,
                       }}
-                      aria-label={`Retirer le tag ${t}`}
+                      aria-label={`Retirer le tag ${tag}`}
                     >
                       ×
                     </button>
@@ -1588,7 +1690,7 @@ function EntryDialog({
                 onChange={(e) => setFavorite(e.target.checked)}
                 style={{ cursor: "pointer" }}
               />
-              <span>⭐ Favori</span>
+              <span>{t("form.favoriteLabel")} Favori</span>
             </label>
 
             {error && <p className="error-text">{error}</p>}
@@ -1600,14 +1702,14 @@ function EntryDialog({
               onClick={onClose}
               className="btn btn-ghost btn-sm"
             >
-              Annuler
+              {t("form.cancelBtn")}
             </button>
             <button
               type="submit"
               disabled={pending || !name.trim()}
               className="btn btn-primary btn-sm"
             >
-              {pending ? "Enregistrement…" : isEdit ? "Mettre à jour" : "Créer"}
+              {pending ? t("form.savingBtn") : isEdit ? t("form.updateBtn") : t("form.createEntryBtn")}
             </button>
           </div>
         </form>
@@ -1642,6 +1744,7 @@ function MoveDialog({
   onClose: () => void;
   onMoved: (targetLabel: string) => void;
 }) {
+  const t = useTranslations("vault");
   const [destinations, setDestinations] = useState<Destinations | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scope, setScope] = useState<"team_org" | "team_project">("team_org");
@@ -1691,7 +1794,7 @@ function MoveDialog({
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!parentSlug || !collectionSlug) {
-      setError("Sélectionne une destination.");
+      setError(t("move.noDestError"));
       return;
     }
     setError(null);
@@ -1712,7 +1815,7 @@ function MoveDialog({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Déplacement impossible.");
+        setError(data?.error ?? t("deleteError"));
         return;
       }
       const label = `${selectedParent?.name ?? parentSlug} / ${
@@ -1729,12 +1832,12 @@ function MoveDialog({
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Déplacer « {entry.name} »</h2>
+          <h2 className="dialog-title">{t("moveBtn")} « {entry.name} »</h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("form.closeLabel")}
           >
             ✕
           </button>
@@ -1746,19 +1849,17 @@ function MoveDialog({
           </div>
         ) : !destinations ? (
           <div className="dialog-body">
-            <p className="help">Chargement des destinations…</p>
+            <p className="help">{t("move.loadingDest")}</p>
           </div>
         ) : (
           <form onSubmit={submit}>
             <div className="dialog-body">
               <p className="help">
-                Vers une collection d&apos;équipe. L&apos;entrée sortira de ton
-                coffre personnel et deviendra accessible aux membres de la
-                collection.
+                {t("move.teamVaultNote")}
               </p>
 
               <div className="field">
-                <label>Type de destination</label>
+                <label>{t("move.destTypeLabel")}</label>
                 <div className="flex items-center gap-3">
                   <label
                     style={{
@@ -1776,7 +1877,7 @@ function MoveDialog({
                       checked={scope === "team_org"}
                       onChange={() => changeScope("team_org")}
                     />
-                    Organisation
+                    {t("move.scopeOrg")}
                   </label>
                   <label
                     style={{
@@ -1794,13 +1895,13 @@ function MoveDialog({
                       checked={scope === "team_project"}
                       onChange={() => changeScope("team_project")}
                     />
-                    Projet
+                    {t("move.scopeProject")}
                   </label>
                 </div>
               </div>
 
               <div className="field">
-                <label>{scope === "team_org" ? "Organisation" : "Projet"}</label>
+                <label>{scope === "team_org" ? t("move.orgLabel") : t("move.projectLabel")}</label>
                 <select
                   value={parentSlug}
                   onChange={(e) => changeParent(e.target.value)}
@@ -1808,25 +1909,25 @@ function MoveDialog({
                   required
                   disabled={noTargets}
                 >
-                  <option value="">— Sélectionner —</option>
+                  <option value="">{t("move.selectPlaceholder")}</option>
                   {parentOptions.map((p) => (
                     <option key={p.slug} value={p.slug}>
                       {p.name}
-                      {p.collections.length === 0 ? " (aucune collection)" : ""}
+                      {p.collections.length === 0 ? t("move.noCollectionSuffix") : ""}
                     </option>
                   ))}
                 </select>
                 {noTargets && (
                   <div className="help" style={{ marginTop: 6 }}>
                     {scope === "team_org"
-                      ? "Aucune organisation accessible."
-                      : "Aucun projet accessible."}
+                      ? t("move.noOrgs")
+                      : t("move.noProjects")}
                   </div>
                 )}
               </div>
 
               <div className="field">
-                <label>Collection</label>
+                <label>{t("move.collectionLabel")}</label>
                 <select
                   value={collectionSlug}
                   onChange={(e) => setCollectionSlug(e.target.value)}
@@ -1834,7 +1935,7 @@ function MoveDialog({
                   required
                   disabled={!parentSlug || collections.length === 0}
                 >
-                  <option value="">— Sélectionner —</option>
+                  <option value="">{t("move.selectPlaceholder")}</option>
                   {collections.map((c) => (
                     <option key={c.slug} value={c.slug}>
                       {c.name}
@@ -1843,8 +1944,7 @@ function MoveDialog({
                 </select>
                 {parentSlug && collections.length === 0 && (
                   <div className="help" style={{ marginTop: 6 }}>
-                    Aucune collection EDITOR+ ici. Crée-en une depuis
-                    l&apos;onglet Coffre.
+                    {t("move.noEditorCollections")}
                   </div>
                 )}
               </div>
@@ -1857,14 +1957,14 @@ function MoveDialog({
                 onClick={onClose}
                 className="btn btn-ghost btn-sm"
               >
-                Annuler
+                {t("move.cancelBtn")}
               </button>
               <button
                 type="submit"
                 disabled={pending || !parentSlug || !collectionSlug}
                 className="btn btn-primary btn-sm"
               >
-                {pending ? "Déplacement…" : "Déplacer"}
+                {pending ? t("move.movingBtn") : t("move.moveBtn")}
               </button>
             </div>
           </form>
@@ -1903,6 +2003,7 @@ function ImportDialog({
   onClose: () => void;
   onImported: (count: number) => void;
 }) {
+  const t = useTranslations("vault");
   const [csv, setCsv] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -1940,7 +2041,7 @@ function ImportDialog({
         setError(
           data && "error" in data && data.error
             ? data.error
-            : "Analyse du CSV impossible.",
+            : t("import.error"),
         );
         return;
       }
@@ -1973,19 +2074,19 @@ function ImportDialog({
   }
 
   const formatLabel = preview
-    ? { bitwarden: "Bitwarden", chrome: "Chrome", generic: "Générique" }[preview.format]
+    ? { bitwarden: "Bitwarden", chrome: "Chrome", generic: t("import.formatGeneric") }[preview.format]
     : null;
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Importer un CSV</h2>
+          <h2 className="dialog-title">{t("import.title")}</h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("import.closeLabel")}
           >
             ✕
           </button>
@@ -1993,15 +2094,12 @@ function ImportDialog({
 
         <div className="dialog-body">
           <p className="help">
-            Formats supportés : <strong>Bitwarden</strong>, <strong>Chrome</strong>,
-            CSV générique. Le mot de passe est chiffré côté serveur avant
-            stockage. La colonne <code className="code-mono">folder</code>
-            (Bitwarden) crée automatiquement les collections.
+            {t("import.formats")}
           </p>
 
           {!preview && (
             <div className="field" style={{ marginTop: 12 }}>
-              <label>Fichier CSV</label>
+              <label>{t("import.fileLabel")}</label>
               <input
                 type="file"
                 accept=".csv,text/csv"
@@ -2018,11 +2116,10 @@ function ImportDialog({
                 {fileName} <span className="chip" style={{ marginLeft: 6 }}>{formatLabel}</span>
               </div>
               <p className="help">
-                <strong>{preview.imported}</strong> entrée(s) prête(s) à être
-                importée(s).
+                {t("import.preview", { count: preview.imported })}
               </p>
               <div className="row-meta" style={{ marginTop: 8 }}>
-                Aperçu (5 premières) :
+                {t("import.sampleTitle")}
               </div>
               <ul className="help" style={{ paddingLeft: 18, marginTop: 6 }}>
                 {preview.sample.map((e, i) => (
@@ -2045,7 +2142,7 @@ function ImportDialog({
             onClick={onClose}
             className="btn btn-ghost btn-sm"
           >
-            Annuler
+            {t("import.cancelBtn")}
           </button>
           {preview && (
             <button
@@ -2054,7 +2151,7 @@ function ImportDialog({
               disabled={pending}
               className="btn btn-primary btn-sm"
             >
-              {pending ? "Import en cours…" : `Importer ${preview.imported} entrée(s)`}
+              {pending ? t("import.importingBtn") : t("import.submitBtn", { count: preview.imported })}
             </button>
           )}
         </div>

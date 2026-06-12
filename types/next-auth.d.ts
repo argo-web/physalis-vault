@@ -13,6 +13,9 @@ declare module "next-auth" {
        * `public`) ou superadmin (hors tenant).
        */
       tenantSlug: string | null;
+      /** #5 — instant d'émission du JWT (ms epoch), comparé à
+       *  User.sessionsValidFrom pour invalider les sessions. */
+      loginAt: number | null;
     } & DefaultSession["user"];
   }
 
@@ -27,5 +30,6 @@ declare module "next-auth/jwt" {
     id?: string;
     role?: Role;
     tenantSlug?: string | null;
+    loginAt?: number | null;
   }
 }

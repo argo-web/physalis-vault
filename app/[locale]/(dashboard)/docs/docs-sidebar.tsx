@@ -1,20 +1,21 @@
 "use client";
 
-// Wrapper de l'aside de la doc. Cache l'aside sur la home `/docs` (la
-// page d'accueil affiche la grille des sections en pleine largeur). Sur
-// les pages /docs/[slug] on rend l'aside complete.
-
-import { usePathname } from "next/navigation";
+import { usePathname } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import DocsSidebarNav from "./docs-sidebar-nav";
 import type { DocPage } from "@/lib/docs";
 
 export default function DocsSidebar({ pages }: { pages: DocPage[] }) {
+  const t = useTranslations("docs");
   const pathname = usePathname() ?? "";
-  if (pathname === "/docs") return null;
+  // Hide sidebar on docs index (usePathname from next-intl is locale-stripped)
+  if (/^\/docs\/?$/.test(pathname)) return null;
   return (
     <aside className="docs-sidebar">
-      <div className="docs-sidebar-eyebrow">Documentation</div>
-      <div className="docs-sidebar-count">{pages.length} sections</div>
+      <div className="docs-sidebar-eyebrow">{t("title")}</div>
+      <div className="docs-sidebar-count">
+        {pages.length} {t("section").toLowerCase()}s
+      </div>
       <DocsSidebarNav pages={pages} />
     </aside>
   );

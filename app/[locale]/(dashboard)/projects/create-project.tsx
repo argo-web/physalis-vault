@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 
 export default function CreateProjectForm() {
+  const t = useTranslations("projects");
   const router = useRouter();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +24,7 @@ export default function CreateProjectForm() {
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Création impossible.");
+        setError(data?.error ?? t("createForm.createError"));
         return;
       }
       setName("");
@@ -32,15 +34,15 @@ export default function CreateProjectForm() {
 
   return (
     <form onSubmit={onSubmit} className="create-card">
-      <div className="create-card-title">Créer un projet</div>
+      <div className="create-card-title">{t("createForm.title")}</div>
       <div className="form-row">
         <div className="field">
-          <label>Nom</label>
+          <label>{t("createForm.nameLabel")}</label>
           <input
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="ex: voyages"
+            placeholder={t("createForm.namePlaceholder")}
             className="input"
           />
         </div>
@@ -49,12 +51,11 @@ export default function CreateProjectForm() {
           disabled={pending || name.trim().length === 0}
           className="btn btn-primary"
         >
-          {pending ? "Création..." : "Créer"}
+          {pending ? t("createForm.creatingBtn") : t("createForm.submitBtn")}
         </button>
       </div>
       <p className="help" style={{ marginTop: 10 }}>
-        3 environnements créés automatiquement : <code>production</code>,{" "}
-        <code>staging</code>, <code>development</code>.
+        {t("createForm.hint")}
       </p>
       {error && <p className="error-text" style={{ marginTop: 6 }}>{error}</p>}
     </form>

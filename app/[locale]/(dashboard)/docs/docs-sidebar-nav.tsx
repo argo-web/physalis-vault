@@ -1,26 +1,24 @@
 "use client";
 
-// Sidebar nav de la documentation. Reçoit la liste des pages depuis le
-// Server Component layout (qui lit le filesystem) et gère l'état actif via
-// usePathname côté client. Pas de fetch — la liste arrive en props.
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, usePathname } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { RiBookOpenLine } from "@remixicon/react";
 import { DocIcon } from "@/lib/docs-icons";
 import type { DocPage } from "@/lib/docs";
 
 export default function DocsSidebarNav({ pages }: { pages: DocPage[] }) {
+  const t = useTranslations("docs");
   const pathname = usePathname() ?? "";
-  const isHome = pathname === "/docs";
-  const activeSlug = isHome
-    ? null
-    : pathname.startsWith("/docs/")
-      ? pathname.slice("/docs/".length)
-      : null;
+
+  // usePathname from next-intl returns the path WITHOUT locale prefix.
+  const docsBase = `/docs`;
+  const isHome = pathname === docsBase || pathname === `${docsBase}/`;
+  const activeSlug = pathname.startsWith(`${docsBase}/`)
+    ? pathname.slice(`${docsBase}/`.length).split("/")[0]
+    : null;
 
   return (
-    <nav className="docs-nav" aria-label="Sections de la documentation">
+    <nav className="docs-nav" aria-label={t("title")}>
       <Link
         href="/docs"
         className={`docs-nav-item${isHome ? " active" : ""}`}
@@ -29,7 +27,7 @@ export default function DocsSidebarNav({ pages }: { pages: DocPage[] }) {
         <span className="docs-nav-icon">
           <RiBookOpenLine size={16} aria-hidden />
         </span>
-        <span className="docs-nav-label">Accueil</span>
+        <span className="docs-nav-label">{t("title")}</span>
       </Link>
       {pages.map((p) => {
         const active = activeSlug === p.slug;

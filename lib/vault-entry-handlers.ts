@@ -9,7 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { readJson } from "@/lib/api";
 import { logAction } from "@/lib/audit";
-import { isPlatformAdmin } from "@/lib/roles";
+import { isPlatformAdmin, hasDevPrivileges } from "@/lib/roles";
 import {
   validateEntryCreate,
   validateEntryPatch,
@@ -383,7 +383,7 @@ export async function patchEntry(
         orgRole === "OWNER" ||
         orgRole === "ADMIN"
           ? "OWNER"
-          : orgRole === "DEV"
+          : hasDevPrivileges(orgRole)
             ? "EDITOR"
             : null;
       const memberRole = target.members[0]?.role ?? null;
@@ -406,7 +406,7 @@ export async function patchEntry(
         targetRole = "OWNER";
       } else if (projectRole) {
         targetRole = PROJECT_TO_VAULT_LOCAL[projectRole];
-      } else if (orgRole === "DEV") {
+      } else if (hasDevPrivileges(orgRole)) {
         // Aligne avec requireProjectCollectionAccess : OrgDEV sans
         // ProjectMember explicite obtient EDITOR implicite.
         targetRole = "EDITOR";

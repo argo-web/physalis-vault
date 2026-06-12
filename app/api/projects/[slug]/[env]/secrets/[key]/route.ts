@@ -261,7 +261,11 @@ export async function DELETE(req: Request, { params }: Params) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    // Deux awaits séquentiels sur prisma (client étendu) — évite $transaction
+    // dont la gestion d'erreur est incompatible avec l'extension multi-tenant.
+    // secretVersion.deleteMany en premier : défense si le CASCADE DB est absent.
     await prisma.secretVersion.deleteMany({ where: { secretId: existing.id } });
+    // select minimal : évite "RETURNING *" qui référence des colonnes absentes en staging (P2022)
     await prisma.secret.delete({ where: { id: existing.id }, select: { id: true } });
 
     logAction({

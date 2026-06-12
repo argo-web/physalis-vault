@@ -3,7 +3,7 @@
 > Ce fichier documente l'architecture, les entités, les API, les composants et l'infrastructure de Physalis.
 > Il sert de contexte pour toute IA travaillant sur le projet.
 
-> Migration depuis SecretVault : le rebrand `secretvault → physalis` a été achevé en Phase 0.2 (cf. [phase-0.2-rename-runbook.md](phase-0.2-rename-runbook.md)). Le projet a aussi évolué d'un produit self-hosted mono-tenant vers une **plateforme SaaS multi-tenant** (Phase 1+ → 6, plans FREE/SHARED/DEDICATED).
+> Migration depuis SecretVault : le rebrand `secretvault → physalis` a été achevé en Phase 0.2 (cf. [phase-0.2-rename-runbook.md](steps-docs/done/phase-0.2-rename-runbook.md)). Le projet a aussi évolué d'un produit self-hosted mono-tenant vers une **plateforme SaaS multi-tenant** (Phase 1+ → 6, plans FREE/SHARED/DEDICATED).
 
 ---
 
@@ -13,7 +13,7 @@ Gestionnaire de secrets multi-tenant proposé en SaaS (vault.physalis.cloud) ou 
 
 - Centralise les variables d'environnement de tous les projets dans une base PostgreSQL chiffrée AES-256-GCM.
 - **Architecture schema-per-tenant** : chaque client a son propre schéma PostgreSQL `client_<slug>` qui contient toutes ses données (Organizations, Projects, Secrets, AccessLog, coffres, etc.). Un schéma `admin` séparé contient les métadonnées plateforme (Client, Subscription, AuditLog admin, TokenIndex, OidcPolicy).
-- **Trois plans** : FREE (1 org / 1 user, gratuit-permanent), SHARED (2 orgs / 5 users, 5€/mois après 14j d'essai), DEDICATED (5 orgs / 15 users, 25€/mois — instance + DB dédiées, à venir).
+- **Trois plans** : FREE (1 org / 1 siège, gratuit-permanent), SHARED (1 org / 5 sièges, 7€/mois après 14j d'essai), DEDICATED (2 orgs / 5 sièges, 29€/mois — instance + DB dédiées, à venir). Add-ons : organisation supplémentaire (7€, bundle isolé 2 serveurs / 10 OIDC / 2 sièges confinés), siège global (5€), serveur (5€), projet OIDC (3€), packs email (+5k/+15k/+30k à 5/12/20€). **Modèle de cloisonnement orgs (org principale `isPrimary` + sièges 2 niveaux + quotas isolés) et grille email détaillés dans [steps-docs/changement_pricing_orga.md](steps-docs/changement_pricing_orga.md).**
 - **Multi-organisation par tenant** : à l'intérieur d'un tenant, chaque user appartient à une ou plusieurs organisations ; les projets, secrets et machine tokens sont scopés à une organisation. Invitations par email avec lien signé (TTL 48 h).
 - Deux modes d'accès :
   - **Web (humains)** : NextAuth (Credentials), gestion fine via UI, switcher d'org dans le header. Login via `vault.physalis.cloud/login?tenant=<slug>` (FREE/legacy) ou via `<slug>.physalis.cloud` (SHARED/DEDICATED).
@@ -67,13 +67,24 @@ Chaque tenant créé déclenche [lib/provisioning.ts `provisionClientSchema(slug
 
 | Modèle | Rôle | Champs clés |
 |---|---|---|
-| `Client` | Tenant de la plateforme (= un schéma `client_<slug>`) | `slug` (unique, sert de sous-domaine), `plan` (`Plan`), `maxOrgs` / `maxUsers` (override des defaults par plan, éditables via `/admin/clients/[id]`), `status` (`ClientStatus`), `trialEndsAt` (nullable, null pour FREE), `comped` (Boolean — abonnement offert, skip facturation), `compedReason` (text 255), `stripeCustomerId` |
-| `Subscription` | Historique des abonnements Stripe par client | `plan`, `status` (`SubscriptionStatus`), `stripeSubscriptionId`, périodes — alimenté quand l'intégration Stripe sera branchée |
+| `Client` | Tenant de la plateforme (= un schéma `client_<slug>`) | `slug` (unique, sert de sous-domaine), `plan` (`Plan`), `maxOrgs` / `maxUsers` (override des defaults par plan, éditables via `/admin/clients/[id]`), `status` (`ClientStatus`), `trialEndsAt` (nullable, null pour FREE), `comped` (Boolean — abonnement offert, skip facturation), `compedReason` (text 255), `stripeCustomerId`. **Add-ons (quantités sync depuis le webhook Stripe)** : `extraOrgs`, `extraUsers`, `extraServers`, `extraOidcProjects`, `extraEmail5k`/`extraEmail15k`/`extraEmail30k` (packs email empilables ×5000/15000/30000). `emailUsageResetAt` (borne de période pour le reset du compteur email relais) |
+| `Subscription` | Historique des abonnements Stripe par client | `plan`, `status` (`SubscriptionStatus`), `stripeSubscriptionId`, périodes — alimenté par les webhooks Stripe |
 | `AuditLog` (admin) | Actions plateforme (création client, suspension, provisioning…) | `action` (string ouvert : `client.created`, `schema.provisioned`, `client.quotas_updated`, `client.comped_toggled`, …), `clientId` (SetNull), `actor` (email superadmin ou `system`), `metadata` JSON |
-| `TokenIndex` | Mapping `tokenHash → tenantSlug` (Phase 6.A) | `tokenHash` (PK), `tenantSlug`, `kind` (`TokenKind` : MACHINE / PLUGIN). Permet de résoudre quel schéma `client_<slug>` contient le token, sans scanner toutes les bases. |
-| `OidcPolicy` | Policy OIDC GitHub indexée global (Phase 6.B partial — dual-write) | `(repo, workflow, branch, tenantSlug, projectId, environmentId)` unique + index `(repo, workflow, branch)`. Sert au lookup hot-path de `/api/deploy` pour résoudre la cible (tenant + projet + env) avant de switcher vers le schéma tenant. |
+| `TokenIndex` | Mapping `tokenHash → tenantSlug` (Phase 6.A) | `tokenHash` (PK), `tenantSlug`, `kind` (`TokenKind` : MACHINE / PLUGIN / SHARE / SECRET_REQUEST / USER / ORG / API_KEY). Permet de résoudre quel schéma `client_<slug>` contient le token, sans scanner toutes les bases. |
+| `OidcPolicy` | Policy OIDC GitHub indexée global (Phase 6.B) | `(repo, workflow, branch, tenantSlug, projectId, environmentId)` unique + index `(repo, workflow, branch)`. Sert au lookup hot-path de `/api/deploy` pour résoudre la cible (tenant + projet + env) avant de switcher vers le schéma tenant. |
+| `LifecycleEmail` | Traçabilité emails lifecycle (trial expiry…) | `clientId` (Cascade), `type` (`"overage_J7"` / `"overage_J30"`, extensible), `sentAt`. Utilisé par le cron trial-expiry pour éviter le doublon. |
+| `StripeEventLog` | Idempotence des webhooks Stripe | `id` (= `event.id` Stripe), `type`, `payload` JSON, `receivedAt`. Le handler check si l'event est déjà traité avant tout traitement. |
+| `PasswordResetToken` | Token de reset de mot de passe cross-tenant | `tokenHash` (SHA-256 unique), `tenantSlug` (pour withTenantSchema), `userId` (cuid du User dans le schéma tenant), `email` (dénormalisé), `expiresAt` (1h), `usedAt` (single-use). Token brut `sv_reset_<32hex>`. |
 
-**Plans + features** : voir [lib/plans.ts](../lib/plans.ts) — `PLAN_QUOTAS`, `PLAN_FEATURES` (custom_domain, multi_users, server_management, github_actions_oidc, dedicated_instance, support, backups), `canUseFeature(plan, feature)`, `getTenantLoginUrl(plan, slug, opts)`, `planHasTrial(plan)`. Le helper `getQuotasForClient` est implicite : `lib/quotas.ts` lit directement `Client.maxOrgs`/`maxUsers`, qui sont initialisés à `PLAN_QUOTAS[plan]` à la création et éditables ensuite (overrides par client).
+**Plans + features** : voir [lib/plans.ts](../lib/plans.ts) — `PLAN_QUOTAS`, `PLAN_FEATURES` (custom_domain, multi_users, server_management, github_actions_oidc, dedicated_instance, support, backups), `canUseFeature(plan, feature)`, `getTenantLoginUrl(plan, slug, opts)`, `planHasTrial(plan)`, constantes add-ons (`ADDON_*_PRICE_CENTS`, `ADDON_ORG_BUNDLE`, `ADDON_EMAIL_*`, `extraEmailsFromPacks`).
+
+**Quotas (refonte cloisonnement orgs)** — [lib/quotas.ts](../lib/quotas.ts) :
+- **Orgs** : `Client.maxOrgs + extraOrgs` (tenant-wide).
+- **Sièges à 2 niveaux** : `checkGlobalSeatQuota` (sièges **globaux** = membres de l'org principale `isPrimary`, max = `Client.maxUsers + extraUsers`) vs `checkOrgSeatQuota(orgId)` (sièges **confinés** d'une org ajoutée = membres non-globaux, max = `Organization.maxSeats`). `checkSeatForOrgAdd` arbitre à l'invitation.
+- **Serveurs / OIDC scopés PAR ORG** : `checkServerQuota(slug, orgId)` / `checkOidcProjectQuota(slug, orgId)` — org principale → `PLAN_QUOTAS[plan] + Client.extra*` ; org ajoutée → bundle stocké sur l'`Organization`.
+- `getPrimaryOrgId(slug)` résout l'org principale (`isPrimary`, fallback la plus ancienne).
+
+> `getTenantLoginUrl` accepte un `opts.locale` optionnel (`fr` / `en` / `es`) qui préfixe l'URL retournée (`https://<slug>.physalis.cloud/{locale}/login`). À fournir depuis les callers user-facing (login-resolve API, dashboard logout, signup) pour préserver la langue active de l'utilisateur et éviter le 307 cross-domain du middleware locale. Omettre la `locale` côté admin (création client, emails superadmin) où le destinataire final est inconnu — le middleware route alors selon son `Accept-Language`. Cf. §6.5.
 
 ### 3.2 Modèles TENANT (`client_<slug>` schema)
 
@@ -82,20 +93,34 @@ Voir [prisma/tenant-schema.prisma](../prisma/tenant-schema.prisma).
 | Modèle | Rôle | Champs clés |
 |---|---|---|
 | `User` | Compte humain | `email` (unique), `password` (bcrypt), `role` (ADMIN \| MEMBER), 2FA optionnelle (`twoFactorEnabled` + `twoFactorSecret`/`Iv`/`Tag` chiffrés AES-256-GCM + `backupCodes` String[] bcrypt) |
-| `Organization` | Espace isolé multi-tenant | `slug` (unique), `name`, relations members/projects/invitations/secrets |
-| `OrgMember` | Membership d'un user dans une org | `(userId, organizationId)` unique ; `role` (OWNER \| ADMIN \| MEMBER) |
+| `Organization` | Espace isolé multi-tenant ; l'org **`isPrimary`** = compte général du tenant | `slug` (unique), `name`, **`isPrimary`** (Boolean — org principale, ses quotas sont dérivés du plan ; les orgs ajoutées portent un bundle isolé), quotas isolés des orgs ajoutées : `maxServers` / `maxOidcProjects` / `maxSeats` (sièges confinés) / `maxEmailsPerMonth` / `extraEmails` (defaults = `ADDON_ORG_BUNDLE`), relations members/projects/invitations/secrets. Cf. [steps-docs/changement_pricing_orga.md](steps-docs/changement_pricing_orga.md) |
+| `OrgMember` | Membership d'un user dans une org | `(userId, organizationId)` unique ; `role` (OWNER \| ADMIN \| ADMIN_DEV \| DEV \| MEMBER) |
 | `OrgSecret` | Secret global org (ex. `GITHUB_DISPATCH_TOKEN`) | `(organizationId, key)` unique ; chiffré AES-256-GCM comme `Secret` |
+| `ClientEmailConfig` | Activation du service email Pink-Floyd au niveau **CLIENT** (singleton par tenant) | `tenantSlug` unique ; `enabled Boolean`, `accountId?` (compte Pink-Floyd **partagé par TOUS les projets/orgs du client**). Le métrage/quota email est au niveau client, pas par org (cf. §4.20). |
 | `Invitation` | Invitation par email (TTL 48 h) | `tokenHash` (sha256, unique) ; `email`, `role`, `expiresAt`, `acceptedAt`, `invitedById` |
 | `AccessLog` | Audit log persistant (append-only) | `action` (enum `AccessAction`), `actorUser*` / `actorToken*` (dénormalisé), `organizationId`/`projectId`/`environmentId` (FK SetNull), `secretKey`, `ipAddress`, `userAgent`, `metadata` (JSON) |
 | `Project` | Conteneur applicatif | `slug` (unique global, **éditable**), `name`, **`organizationId`** (FK), `githubRepo` (`owner/repo`), `githubWorkflow` (par défaut `redeploy.yml`), relations envs/tokens/members/services/appAccounts/policies |
 | `Server` | VPS au niveau org pour les déploiements OIDC | `(organizationId, name)` unique ; `ip`, `sshUser`, clé SSH privée chiffrée AES-256-GCM (`encryptedKey`/`iv`/`tag`) — **jamais relisible après création** |
 | `Policy` | Liaison stricte (repo, workflow, branch) → (project, environment) pour `/api/deploy` | `(repo, workflow, branch, projectId, environmentId)` unique ; index sur `(repo, workflow, branch)` pour le hot path. Aucune wildcard |
 | `Environment` | Bucket dans un projet (production, staging, …) | `(projectId, name)` unique ; `url` (URL déployée, optionnel), `dockerCompose` (contenu YAML, optionnel), **`serverId`** (FK Server, SetNull) + **`deployPath`** (chemin de deploy sur le VPS) |
-| `Secret` | Paire clé/valeur chiffrée (env-level) | `(environmentId, key)` unique ; `encryptedValue`/`iv`/`tag` base64 ; `category` (text nullable, validé app-level contre [lib/categories.ts](../lib/categories.ts)) |
+| `Secret` | Paire clé/valeur chiffrée (env-level) | `(environmentId, key)` unique ; `encryptedValue`/`iv`/`tag` base64 ; `category` (text nullable) ; `tags String[]` (filtrage intégrations) ; champs rotation : `rotationEnabled Boolean`, `rotationStrategy RotationStrategy?` (DATABASE / JWT_SECRET / WEBHOOK / REMINDER / API_KEY), `rotationIntervalDays Int?`, `rotationNextAt DateTime?`, `rotationLastStatus String?`, `dbHost/Port/Name/Type/User?` (pour DATABASE), `rotationWebhookUrl?` (pour WEBHOOK), `apiKeyId?` → `ApiKey` (pour API_KEY) |
 | `Service` | Service tiers du projet (Stripe, Firebase…) | `name`, `url?`, blob chiffré JSON `{user, password}` (`encryptedData`/`iv`/`tag`) ; lié au projet |
+| `ProjectEmailConfig` | Config email Pink-Floyd au niveau projet | `projectId` unique ; `domain`, `domainId`, `keyId`, **clé API chiffrée** (`encryptedKey`/`iv`/`tag`), `verified Boolean`, `dnsRecords Json` ; rotation blue/green : `rotationEnabled`, `rotationIntervalDays?`, `rotationNextAt?`, `rotationLastAt?`, `rotationLastStatus?`, `pendingRevokeKeyId?`. Injecté dans le `.env` de chaque env au déploiement. Cf. §4.20 |
 | `AppAccount` | Compte de test pour login dans l'app | `name`, blob chiffré JSON `{user, password}` ; lié au projet |
+| `ClientBackupConfig` | Activation + **destination** du backup au niveau client | `tenantSlug` unique ; `enabled` ; `backupServerId?` → Server (`BackupDest`) + `backupPath?` (chemin de base ; chemin projet = `{base}/{slug}`). Cf. §4.21 |
+| `ProjectBackupConfig` | Config backup d'un projet | `projectId` unique ; `enabled`, `environmentName`, planning (`scheduleHour`/`intervalDays`/`backupNextAt`/`backupLastAt`/`backupLastStatus`/`forceRequestedAt`), rétention (`retentionDaily`/`Weekly`/`Monthly`), GPG (`gpgPublicKey?`/`gpgKeyId?`/`agentRegisteredAt?` — **pubkey only**), token agent (`agentTokenHash?` + chiffré `agentTokenEnc/Iv/Tag?`), `overdueAlertedAt?`. Cf. §4.21 |
+| `ProjectBackupDatabase` | DB d'un projet à sauvegarder (**1-N**) | `configId` (Cascade) ; `dbType`, `dbName`, `dbHost`, `dbUser`, `passwordSecretKey?` (clé du secret `.env`), `port?`, `enabled`. Détectée depuis le compose + `.env`, éditable. Cf. §4.21 |
+| `ProjectBackupEntry` | Historique d'un backup (rempli par l'agent) | `configId`/`projectId` ; `filename`, `sizeBytes?`, `dbType`, `dbName`, `environmentName`, `destLocation`, `status` (PENDING/SUCCESS/FAILED), `errorMessage?`. Cf. §4.21 |
 | `MachineToken` | Token Bearer pour VPS | `tokenHash` (sha256, unique) ; lié à `(project, environment)` ; **`createdById`** (FK User, SetNull si user supprimé) ; `revokedAt` pour soft-delete |
 | `PluginToken` | Session 4h pour l'extension navigateur | `tokenHash` (sha256, unique) ; lié à un `User` ; `expiresAt`, `revokedAt`, `lastUsedAt`, `userAgent`. Préfixe `sv_plugin_<hex>`. Cf. §4.8c |
+| `UserToken` | Token Bearer scopé à un User (Phase 11a) | `tokenHash` (SHA-256 unique), `prefix` (12 premiers chars), `userId` (Cascade), `name`, `expiresAt?`, `lastUsedAt?`, `revokedAt?`. Préfixe `sv_user_<32hex>`. Accès READ aux projets dont l'user est ProjectMember. Cf. §4.11 |
+| `OrgToken` | Token Bearer scopé à une Organisation (Phase 11c) | `tokenHash` (SHA-256 unique), `prefix`, `organizationId` (Cascade), `createdById` (SetNull — survit au départ du user), `name`, `description?`, `allProjects Boolean`, `allowedProjectIds String[]`, `allowedScopes OrgTokenScope[]`, `expiresAt?`, `revokedAt?`. Préfixe `sv_org_<32hex>`. Cf. §4.11 |
+| `SecretVersion` | Historique des valeurs d'un Secret (Phase 10) | `secretId` (Cascade), `version` Int, `encryptedValue/iv/tag`, `createdById` (SetNull). Unique `(secretId, version)`. Rétention 50 max par secret. Cf. §4.14 |
+| `OrgSecretVersion` | Historique des valeurs d'un OrgSecret | Même structure que `SecretVersion` mais pour `OrgSecret.id`. |
+| `SecretRequest` | Demande de secret externe via lien chiffré (Phase 12.5) | `tokenHash` (SHA-256 unique), `label`, `description?`, `requestedById/Email`, `recipientEmail?`, `organizationId` (Cascade), `projectId?` (SetNull), `environmentName?`, `secretKey?`, `publicKeyJwk` (ECDH P-256), `encryptedSecret?/iv?/ephemeralPublicKey?` (rempli après soumission), TTL `expiresAt` (48h). Cf. §4.12 |
+| `Api` | API Gateway — définition d'une API (Phase 13) | `projectId` (Cascade), `name`, `mode` (`REMOTE` \| `JWT`), `jwtSecret/iv/tag?`, `defaultRateLimit?`, `defaultRateLimitWindow` (`"1m"`), `liveEnvId?`/`testEnvId?` (envs de secrets associés). Cf. §4.13 |
+| `ApiKey` | Clé d'accès à une API Gateway | `apiId` (Cascade), `keyHash` (SHA-256 unique), `keyPrefix` (12 chars), `name`, `scopes String[]`, `rateLimit?`, `expiresAt?`, `revokedAt?`, `createdById` (SetNull), `meta Json?`. Liée optionnellement à un `Secret` pour la rotation `API_KEY`. Préfixe `ph_live_sk_*`/`ph_test_sk_*`. |
+| `ApiLog` | Log de chaque appel à `/api/gateway/verify` | `apiId`, `keyId?`, `keyPrefix?`, `method`, `path?`, `ipAddress?`, `userAgent?`, `valid Boolean`, `reason?`, `statusCode?`, `latencyMs?`. |
 | `VaultEntry` | Coffre personnel (privé par user) | `userId` (FK Cascade), `name`, `url?`, `username?`, `encryptedPassword?` (AES-256-GCM, 3 colonnes), `encryptedTotpSecret?` (TOTP du site cible, 3 colonnes), `tags String[]`, `favorite Boolean`. Aucun partage en V1 |
 | `TeamVaultCollection` | Coffre d'équipe org OU projet | `name`, `slug`, EXACTEMENT un parmi `organizationId?` et `projectId?` (CHECK constraint DB). Unique `(organizationId, slug)` et `(projectId, slug)`. Cascade depuis l'org / le projet. Cf. §4.10 |
 | `TeamVaultEntry` | Entrée d'une collection d'équipe | Mêmes colonnes que `VaultEntry` mais `collectionId` au lieu de `userId` |
@@ -110,18 +135,21 @@ Cascades : `onDelete: Cascade` sur Organization → OrgMember/Project/Invitation
 
 | Rôle | Périmètre |
 |---|---|
-| `User.role = ADMIN` | Global. Donne **OrgRole OWNER implicite sur toutes les orgs** (admin god mode) |
+| `User.role = SUPERADMIN` | Opérateur plateforme Physalis : accès `/admin`. Hérite des pouvoirs ADMIN tenant (test/dépannage). `isPlatformAdmin` = ADMIN ou SUPERADMIN ; `isSuperadmin` strictement réservé aux gates `/admin` (cf. `lib/roles.ts`) |
+| `User.role = ADMIN` | Global tenant. Donne **OrgRole OWNER implicite sur toutes les orgs** (admin god mode, legacy testing) |
 | `OrgRole.OWNER` | Tout faire dans l'org : gérer membres, supprimer l'org, créer/supprimer projets, accès OWNER projet implicite |
 | `OrgRole.ADMIN` | Gérer membres (sauf grant OWNER), créer/supprimer projets, accès OWNER projet implicite |
+| `OrgRole.ADMIN_DEV` | **Droits DEV** (EDITOR implicite sur les projets, vault DEV…) **+ CRUD serveurs et secrets d'org** (accès cross-org). Entre DEV et ADMIN dans `ORG_ROLE_RANK`. Helper `hasDevPrivileges()` (`lib/roles.ts`). Ne gère pas les membres |
+| `OrgRole.DEV` | Développeur de l'org. **EDITOR implicite sur tous les projets** sans avoir à être inscrit comme ProjectMember. Accès EDITOR aux collections org. Ne peut pas gérer les membres ni supprimer des projets |
 | `OrgRole.MEMBER` | Voir l'org, créer des projets ; **accès aux projets uniquement si ProjectMember explicite** |
 | `ProjectRole.OWNER` | Gérer le projet (delete, future : membres projet) |
 | `ProjectRole.EDITOR` | CRUD secrets + gestion machine tokens |
 | `ProjectRole.VIEWER` | Liste des clés + reveal une-à-une |
 
-**Règle clé** : un Org OWNER/ADMIN obtient automatiquement un `ProjectRole.OWNER` effectif sur tous les projets de l'org, sans avoir besoin d'être inscrit dans `ProjectMember`. Un Org MEMBER doit être inscrit explicitement comme ProjectMember pour accéder à un projet.
+**Règle clé** : un Org OWNER/ADMIN obtient automatiquement un `ProjectRole.OWNER` effectif sur tous les projets de l'org. Un Org DEV obtient `ProjectRole.EDITOR` implicite sur tous les projets (sans row ProjectMember). Un Org MEMBER doit être inscrit explicitement comme ProjectMember pour accéder à un projet.
 
 Helpers de comparaison dans [lib/api.ts](../lib/api.ts) :
-- `ORG_ROLE_RANK = { MEMBER: 1, ADMIN: 2, OWNER: 3 }`
+- `ORG_ROLE_RANK = { MEMBER: 1, DEV: 2, ADMIN: 3, OWNER: 4 }` — le rang DEV (2) est entre MEMBER et ADMIN
 - `PROJECT_ROLE_RANK = { VIEWER: 1, EDITOR: 2, OWNER: 3 }`
 
 ### 3.4 Cycle de vie d'un tenant
@@ -135,7 +163,7 @@ Helpers de comparaison dans [lib/api.ts](../lib/api.ts) :
 1. **Bootstrap admin** ([scripts/bootstrap-admin.mjs](../scripts/bootstrap-admin.mjs)) ou register POST → User créé + Organization auto-créée (slug = handle email, déduplication automatique) + OrgMember(OWNER).
 2. Invitation : `POST /api/orgs/[slug]/members { email, role }` génère un `Invitation` (token random 32B hex, hash SHA-256 stocké, TTL 48 h) et envoie un email avec le lien `/invite/<token>`. Refus 403 si quota `Client.maxUsers` atteint.
 3. Acceptation : l'invité doit avoir un compte avec l'email exact ; visite la page, clique Accepter → POST `/api/invitations/[token]` → upsert OrgMember + `acceptedAt`.
-4. Retrait d'un membre : `DELETE /api/orgs/[slug]/members/[userId]` supprime ses ProjectMember dans l'org **et révoque tous ses MachineToken** (transaction). Garde-fou : impossible de retirer/rétrograder le dernier OWNER.
+4. Retrait d'un membre : `DELETE /api/orgs/[slug]/members/[userId]` supprime ses ProjectMember dans l'org **et révoque tous ses MachineToken** (transaction). **Purge prudente de l'orphelin** : si le user n'appartient plus à aucune org **ET** que son coffre perso est vide (`VaultEntry`/`VaultCollection` = 0), son compte `User` est supprimé (évite un compte fantôme + libère le siège) ; sinon conservé (un coffre perso non vide n'est jamais détruit par un retrait). Tracé en audit (`orphanUserPurged`/`orphanUserKept`). Garde-fou : impossible de retirer/rétrograder le dernier OWNER.
 
 ### 3.6 Tenant courant (routing)
 
@@ -593,6 +621,245 @@ V1 : algo SHA-1 / 6 digits / 30s par défaut (>99% des sites). Les options `algo
 
 **Côté extension** : [src/lib/totp.ts](../../secretvault-extension/src/lib/totp.ts) — générateur TOTP RFC 6238 pur Web Crypto (HMAC-SHA1, base32 decode inline). Vérifié par les 4 vecteurs RFC officiels. Le popup affiche `287 082 · 18s` avec countdown live + boutons Copier / Remplir. L'auto-fill cible en priorité `input[autocomplete="one-time-code"]` (standard W3C) puis fallback heuristique sur `name|id` contenant `otp/totp/2fa/verification`.
 
+### 4.11 Tokens d'intégration (Phase 11)
+
+Deux types de tokens Bearer pour les intégrations tierces (N8n, Make, Zapier) — distincts des `MachineToken` (scopés project+env).
+
+#### UserToken (`sv_user_<32hex>`)
+
+Scopé à un `User`. Donne accès en lecture aux projets dont l'user est ProjectMember (au rôle effectif). Le token survit tant que l'user existe. Indexé dans `admin.TokenIndex (kind=USER)`.
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| GET | `/api/user-tokens` | session | Liste mes UserTokens (sans hash, juste prefix + métadonnées) |
+| POST | `/api/user-tokens` | session | Crée. Body : `{ name, expiresAt? }`. Token brut retourné **une seule fois**. Indexé dans TokenIndex. |
+| DELETE | `/api/user-tokens/[id]` | session | Soft-revoke. Audit `USER_TOKEN_REVOKED` |
+
+**Consommation** : `GET /api/secrets/[slug]/[env]` accepte `Authorization: Bearer sv_user_<hex>`. Validation via `validateUserToken()` → vérifie VIEWER+ effectif sur le projet/env. Audit `SECRET_FETCH_BULK` avec `actorTokenName`.
+
+#### OrgToken (`sv_org_<32hex>`)
+
+Scopé à une `Organization`. Survit au départ du user créateur (FK `createdById` SetNull). Scopes : `SECRETS_READ` (seul scope V1). Périmètre projets : `allProjects=true` ou `allowedProjectIds=[...]`. Indexé dans `admin.TokenIndex (kind=ORG)`.
+
+| Méthode | Route | Auth requis | Description |
+|---|---|---|---|
+| GET | `/api/orgs/[slug]/org-tokens` | OrgADMIN | Liste (sans hash) |
+| POST | `/api/orgs/[slug]/org-tokens` | OrgADMIN | Body : `{ name, description?, allProjects, allowedProjectIds?, allowedScopes, expiresAt? }`. Token brut **une seule fois**. |
+| PATCH | `/api/orgs/[slug]/org-tokens/[id]` | OrgADMIN | Update partiel `{ name?, description?, allProjects?, allowedProjectIds?, allowedScopes?, expiresAt? }` |
+| DELETE | `/api/orgs/[slug]/org-tokens/[id]` | OrgADMIN | Soft-revoke |
+| POST | `/api/orgs/[slug]/org-tokens/[id]/regenerate` | OrgADMIN | Regénère le token. Le nouveau brut est retourné une seule fois ; `TokenIndex` est mis à jour. |
+
+**Consommation** : `GET /api/secrets/[slug]/[env]` accepte `Authorization: Bearer sv_org_<hex>`. Validation via `validateOrgToken()` → vérifie scope `SECRETS_READ` + accès au projet/env (allProjects ou liste). Les OrgSecrets (`/api/orgs/[slug]/secrets`) ne sont **jamais** accessibles via OrgToken.
+
+> **RBAC DEV guard** : la création d'OrgToken est gardée côté API par un check `OrgRole >= ADMIN`. Les rôles DEV/MEMBER ne peuvent pas créer de tokens org (ils ont des UserTokens).
+
+---
+
+### 4.12 SecretRequest (Phase 12.5)
+
+Flux pour collecter un secret auprès d'un tiers externe sans l'exposer en clair.
+
+**Flux** :
+1. Admin crée une demande → reçoit `{ requestUrl, privateKey }`. La `privateKey` ECDH P-256 est retournée **une seule fois** (à stocker dans son propre coffre).
+2. Le lien `https://vault.physalis.cloud/request/<token>` est envoyé au tiers.
+3. Le tiers ouvre le lien (public, pas de compte requis), entre la valeur → chiffrée ECDH côté client → `POST /api/public/secret-requests/[token]/submit`.
+4. Admin ouvre la demande dans l'UI → `POST /api/secret-requests/[id]/reveal` (fournit sa `privateKey`, déchiffrement côté client) → valeur plaintext.
+5. Import en un clic → `POST /api/secret-requests/[id]/import`.
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| GET | `/api/secret-requests` | session DEV+ | Liste les demandes (scope orgs du user). Query : `?org=`, `?project=`, `?status=` |
+| POST | `/api/secret-requests` | session DEV+ | Crée. Body : `{ label, organizationId, projectId?, environmentName?, secretKey?, recipientEmail? }`. Retourne `{ id, requestUrl, privateKey, expiresAt }`. Si `recipientEmail`, envoie email auto. |
+| GET | `/api/secret-requests/[id]` | session DEV+ | Détail (statut dérivé, pas la valeur chiffrée) |
+| POST | `/api/secret-requests/[id]/reveal` | session DEV+ | Body : `{ privateKey }`. Déchiffrement ECDH côté serveur → retourne `{ value }`. Pose `viewedAt`. |
+| POST | `/api/secret-requests/[id]/import` | session DEV+ | Importe la valeur dans `(project, env, secretKey)`. Pose `importedAt`. Efface le ciphertext de la DB. |
+| DELETE | `/api/secret-requests/[id]` | session DEV+ | Révoque (pose `revokedAt`, efface ciphertext). |
+| GET | `/api/public/secret-requests/[token]/public` | — (public) | Lecture pour la page externe : `{ label, description, expiresAt, publicKeyJwk }`. 404 si expiré/révoqué. |
+| POST | `/api/public/secret-requests/[token]/submit` | — (public) | Body : `{ encryptedSecret, secretIv, ephemeralPublicKey }`. Pose `submittedAt`. Rate-limit 5/5min/IP. |
+
+Statuts dérivés (pas stockés en DB) : `pending` → `received` → `imported` / `revoked` / `expired`.
+
+**Sécurité post-quantique** (Phase 1, livrée 2026-06-07) : l'échange de clés est désormais **hybride ECDH P-256 + ML-KEM-768** (combineur HKDF-SHA256 avec binding du transcript, pas de XOR) — résistant à un futur ordinateur quantique. La `privateKey` retournée est **composite** `{v, ecdh, mlkem}`. Rétro-compatible : les demandes pré-PQC (ECDH seul) restent déchiffrables (`hybridVersion=null`). Fichiers : [lib/pqc.ts](../lib/pqc.ts) (ML-KEM-768 via `@noble/post-quantum`), [lib/hybrid-kem.ts](../lib/hybrid-kem.ts), migration `20260605120000_secret_request_pqc` (colonnes `mlkemPublicKey`/`mlkemCiphertext`/`hybridVersion`). Détail : [steps-docs/todo/securite-post-quantique.md](steps-docs/todo/securite-post-quantique.md).
+
+---
+
+### 4.13 API Gateway (Phase 13)
+
+Proxy de validation de clés API pour les services exposés par les projets. Deux modes : `REMOTE` (clés SHA-256 hashées dans Physalis) et `JWT` (validation d'un JWT signé avec un secret chiffré dans l'Api).
+
+**Modèles** : `Api` / `ApiKey` / `ApiLog` dans le schéma tenant. Clés préfixées `ph_live_sk_*` (env live) ou `ph_test_sk_*` (env test) — format similaire Stripe.
+
+#### Routes de gestion (UI interne)
+
+| Méthode | Route | Rôle requis | Description |
+|---|---|---|---|
+| GET | `/api/gateway/apis` | ProjectEDITOR+ | Liste les APIs du projet. Query : `?project=<slug>` |
+| POST | `/api/gateway/apis` | ProjectEDITOR | Crée. Body : `{ name, projectId, mode?, description?, url?, liveEnvId?, testEnvId?, defaultRateLimit?, defaultRateLimitWindow?, jwtSecret? }` |
+| GET | `/api/gateway/apis/[id]` | ProjectEDITOR | Détail API + liste clés actives (sans hash) |
+| PATCH | `/api/gateway/apis/[id]` | ProjectEDITOR | Update partiel |
+| DELETE | `/api/gateway/apis/[id]` | ProjectEDITOR | Supprime (cascade keys + logs) |
+| GET | `/api/gateway/apis/[id]/keys` | ProjectEDITOR | Liste clés actives (prefix, name, scopes, rateLimit, lastUsedAt, revokedAt) |
+| POST | `/api/gateway/apis/[id]/keys` | ProjectEDITOR | Crée clé. Body : `{ name, description?, scopes?, rateLimit?, expiresAt? }`. Clé brute retournée **une seule fois**. Indexée dans `TokenIndex (kind=API_KEY)`. |
+| GET | `/api/gateway/apis/[id]/logs` | ProjectEDITOR | Logs paginés. Query : `?limit=`, `?cursor=` |
+| GET | `/api/gateway/apis/[id]/stats` | ProjectEDITOR | Compteurs (total calls, valid/invalid, par clé) |
+| PATCH | `/api/gateway/keys/[id]` | ProjectEDITOR | Update clé (name, scopes, rateLimit) |
+| DELETE | `/api/gateway/keys/[id]` | ProjectEDITOR | Soft-revoke |
+
+#### Endpoint de vérification (client externe)
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| POST | `/api/gateway/verify` | `Authorization: Bearer ph_live_sk_*` (dans body ou header) | Body : `{ apiId, key, scope? }`. Valide la clé → retourne `{ valid: true, keyId, scopes }` ou `{ valid: false, reason }`. Log l'appel dans `ApiLog`. Rate-limit 1000/min/IP (global, pas par clé). |
+
+Retours : `200 { valid: true }` | `200 { valid: false, reason }` | `400` (body invalide) | `404` (Api inconnue) | `429` (rate-limit).
+
+**Rotation API_KEY** : un `Secret` peut être lié à un `ApiKey` (champ `apiKeyId`). Le cron de rotation déclenche la stratégie `API_KEY` → révoque l'ancienne clé, crée une nouvelle via `POST /api/gateway/apis/[id]/keys`, stocke la nouvelle valeur dans le secret.
+
+---
+
+### 4.14 Versioning (Phase 10)
+
+Chaque mise à jour d'un `Secret` ou `OrgSecret` crée une ligne dans `SecretVersion`/`OrgSecretVersion` avant l'écrasement. Rétention 50 versions max (cleanup automatique à l'INSERT).
+
+| Méthode | Route | Rôle requis | Description |
+|---|---|---|---|
+| GET | `/api/projects/[slug]/[env]/secrets/[key]/versions` | VIEWER | Liste les versions (sans valeur, avec `version` Int + `createdAt` + `createdBy`) |
+| GET | `/api/projects/[slug]/[env]/secrets/[key]/versions/[version]` | VIEWER | Reveal d'une version (valeur déchiffrée) |
+| POST | `/api/projects/[slug]/[env]/secrets/[key]/versions/[version]/rollback` | EDITOR | Restaure la version comme valeur courante (transaction : crée une nouvelle version de l'actuelle + écrase). Audit `SECRET_ROLLBACK` |
+| GET | `/api/orgs/[slug]/secrets/[key]/versions` | OrgADMIN | Idem pour OrgSecret |
+| GET | `/api/orgs/[slug]/secrets/[key]/versions/[version]` | OrgADMIN | Reveal version OrgSecret |
+| POST | `/api/orgs/[slug]/secrets/[key]/versions/[version]/rollback` | OrgADMIN | Rollback OrgSecret |
+
+---
+
+### 4.15 Import `.env`
+
+| Méthode | Route | Rôle requis | Description |
+|---|---|---|---|
+| POST | `/api/projects/[slug]/[env]/secrets/import` | EDITOR | Body : `{ content: string }` (contenu d'un fichier `.env`). Parse `KEY=VALUE` (commentaires `#` ignorés, multiline `"..."` supporté), chiffre et upsert chaque paire. Retourne `{ imported: N, skipped: M }`. |
+
+---
+
+### 4.16 Reset de mot de passe
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| POST | `/api/auth/forgot-password` | — (public) | Body : `{ email, tenant }`. Si l'user existe, crée un `PasswordResetToken` (TTL 1h) dans `admin`, envoie email avec lien `/reset-password/<token>`. Toujours 200 (anti-enumération). Rate-limit 3/h/IP. |
+| POST | `/api/auth/reset-password` | — (public) | Body : `{ token, password }`. Valide le hash dans `admin.PasswordResetToken`, applique `bcrypt.hash` + update dans le schéma tenant via `withTenantSchema`, pose `usedAt`. |
+
+---
+
+### 4.17 Facturation Stripe (Phase 5 — LIVE depuis 2026-05-09)
+
+Routes sous `/api/billing/*` — gardées par `requireUser()` + `requireOrgMember(slug, "OWNER")` implicite.
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET/POST | `/api/billing/preview` | Prévisualisation du prorata. Types : `addons`, `plan`, **`cart`** (plan + add-ons en une fois, pour la modale d'abonnement) |
+| POST | `/api/billing/checkout` | Body : **panier** `{ plan, extraOrgs?, extraUsers?, extraServers?, extraOidcProjects?, extraEmail5k?, extraEmail15k?, extraEmail30k? }`. Crée une Stripe Checkout Session **multi line_items** (plan + add-ons) et retourne `{ url }`. Garde-fou FREE porté sur le **plan choisi** ; rejette seulement s'il existe déjà un abonnement Stripe **actif** |
+| POST | `/api/billing/portal` | Crée une Stripe Customer Portal Session et retourne `{ url }` |
+| POST | `/api/billing/change-plan` | Changement de plan self-service. **DB-only** si pas d'abonnement Stripe actif (TRIAL, FREE, ou ACTIVE ex-offert sans Stripe) ; sinon `subscription.update` proraté |
+| POST | `/api/billing/update-addons` | Mise à jour des add-ons (orgs/sièges/serveurs/OIDC + **packs email** 5k/15k/30k) sur l'abonnement existant |
+| POST | `/api/billing/update-subscription` | **Plan + add-ons en un seul `subscription.update`** (proration `always_invoice`). Utilisé par la modale d'abonnement en mode modification |
+| POST | `/api/billing/downgrade-to-free` | Rétrograde au plan FREE (annule l'abonnement Stripe, reset add-ons inclus packs email, revient aux quotas FREE) |
+| POST | `/api/webhook/stripe` | Webhook Stripe (signature HMAC `Stripe-Signature`). Idempotent via `StripeEventLog`. Gère `checkout.session.completed`, `customer.subscription.*`, `invoice.payment_failed`. **`parseAddonsFromItems`** synchronise plan + quantités d'add-ons (dont packs email) sur le `Client` |
+
+**Modale d'abonnement « panier »** ([account/subscription-modal.tsx](../app/[locale]/(dashboard)/account/subscription-modal.tsx)) : ouverte depuis `BillingActions`. Cards plans (Shared / Dedicated grisé « Bientôt » via `dedicatedAvailable`) + compteurs add-ons + total live. Deux modes selon **`hasActiveSubscription`** (existence d'une `Subscription` ACTIVE, ≠ `stripeCustomerId`) : **création** (→ `/checkout` → redirection Stripe) ou **modification** (→ preview `cart` prorata → `/update-subscription`). Cohabite avec `PlanSelector` + `AddonControls`. Constantes prix/quotas dans [lib/plans.ts](../lib/plans.ts) (`PLAN_PRICE_CENTS`, `ADDON_*_PRICE_CENTS`, `ADDON_EMAIL_*`, `ADDON_ORG_BUNDLE`, `extraEmailsFromPacks`).
+
+---
+
+### 4.18 Cron
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| POST | `/api/cron/rotation` | `X-Cron-Secret` | Déclenche la rotation automatique. Itère tous les tenants ACTIVE/TRIAL, cherche les `Secret` avec `rotationEnabled=true` et `rotationNextAt ≤ now`, **puis** les `ProjectEmailConfig` dus (rotation blue/green de la clé API email, cf. §4.20). Cf. §12. |
+| POST | `/api/cron/trial-expiry` | `X-Cron-Secret` | Expire les tenants dont `trialEndsAt ≤ now` (TRIAL → SUSPENDED) + envoie emails J-7 / J-30. Skip les clients `comped=true`. |
+| POST | `/api/cron/overage-reminders` | `X-Cron-Secret` | Envoie des rappels si quota orgs/users dépassé. |
+| POST | `/api/cron/email-usage` | `X-Cron-Secret` | Resync le quota email (plan + packs) au relais + reset du compteur au passage de cycle (`emailUsageResetAt`). Quotidien (06:10 UTC). Cf. §4.20. |
+
+Auth : `timingSafeEqual(sha256(X-Cron-Secret), sha256(CRON_SECRET))` — rejet 401 si absent ou invalide.
+
+---
+
+### 4.19 RGPD — export user
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| GET | `/api/me/export` | session | Exporte les données personnelles du user connecté en JSON (profil, orgs, projets dont il est membre, coffre personnel, audit log). **`?scope=personal`** → profil + coffre perso uniquement (pour les membres non owner/admin, qui n'exportent pas les données du client). Utilisé par la section « Mes données » de `/account`. |
+
+---
+
+### 4.20 Email Pink-Floyd
+
+Module permettant à chaque **projet** d'envoyer ses emails via **Pink-Floyd** (serveur d'envoi auto-hébergé, repo séparé `argo-web/pink-floyd`). 1 service email par projet, activé au niveau org.
+
+**Quota & métrage (niveau CLIENT)** : le quota d'envoi est **au niveau du compte client / tenant** (un seul compte Pink-Floyd par tenant, `ClientEmailConfig`), **pas par org**. Quota effectif = `PLAN_QUOTAS[plan].maxEmailsPerMonth` (**Free 3 000 / Shared 12 000 / Dedicated 15 000**/mois) **+ packs email** souscrits (`extraEmailsFromPacks(client)` : +5000·extraEmail5k + 15000·extraEmail15k + 30000·extraEmail30k). Calcul dans [lib/email-usage.ts](../lib/email-usage.ts) `monthlyEmailQuota(plan, packs)` → poussé au relais via `setEmailQuota` (au connect + cron quotidien `/api/cron/email-usage`, qui resette le compteur au passage de cycle `emailUsageResetAt`). Le compteur `used` vit côté relais. *(Isolation email par org = sous-chantier différé ; `Organization.maxEmailsPerMonth`/`extraEmails` posés mais non branchés. Cap journalier Free 100/j à venir côté relais — cf. [todo_v2.md](todo_v2.md).)*
+
+**Architecture**
+- Physalis dialogue avec la **management API** de Pink-Floyd (header `X-Service-Key`, hors chemin runtime) : création de compte, domaines, clés, expéditeurs, historique.
+- L'app cliente **envoie** via `POST /v1/send` (header `x-api-key` = clé du projet).
+- Stockage : `ClientEmailConfig` (activation + compte Pink-Floyd partagé par tenant) et `ProjectEmailConfig` (domaine + **clé API chiffrée** + DNS). Les variables runtime (`PINK_FLOYD_API_KEY`, `PINK_FLOYD_DOMAIN`, `PINK_FLOYD_URL`) sont injectées dans le `.env` de chaque environnement **au déploiement** ([app/api/deploy/route.ts](../app/api/deploy/route.ts)), jamais stockées en `Secret` éditable.
+- **Gating** (phase de test) : `isEmailModuleEnabled(email)` = `PINK_FLOYD_EMAIL_ENABLED === "true"` **ou** email ∈ `PINK_FLOYD_EMAIL_ALLOWED_EMAILS` ; routes → 404 si non autorisé (fail-closed).
+
+**Routes org**
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| GET | `/api/orgs/[slug]/email` | session, MEMBER | État du service (configuré / activé / compte). |
+| POST | `/api/orgs/[slug]/email` | session, ADMIN | Active : crée/lie le compte Pink-Floyd (idempotent via `externalRef = org.slug`). |
+| DELETE | `/api/orgs/[slug]/email` | session, ADMIN | Désactive (conserve compte + configs projet). |
+
+**Routes projet**
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| GET | `/api/projects/[slug]/email` | session, VIEWER | État : connecté, vérifié, domaine, DNS (toujours), variables, rotation. |
+| POST | `/api/projects/[slug]/email/connect` | session, EDITOR | Enregistre le domaine (gère 409) + génère la clé API (persistée puis révoquée si l'écriture échoue). |
+| POST | `/api/projects/[slug]/email/verify` | session, EDITOR | Vérifie les DNS, persiste `verified`. |
+| DELETE | `/api/projects/[slug]/email` | session, EDITOR | Déconnecte : révoque la clé + supprime la config projet. |
+| POST | `/api/projects/[slug]/email/send` | session, EDITOR | Envoi via `/v1/send` (rate-limit 20/min/user). `from` = expéditeur enregistré. |
+| GET/POST | `/api/projects/[slug]/email/senders` | VIEWER / EDITOR | Liste / crée un expéditeur autorisé. |
+| PUT/DELETE | `/api/projects/[slug]/email/senders/[id]` | session, EDITOR | Renomme / supprime un expéditeur. |
+| GET | `/api/projects/[slug]/email/history` | session, VIEWER | Historique des envois du domaine (index par compte). |
+| POST | `/api/projects/[slug]/email/reveal` | session, EDITOR | Révèle la clé API (audité `SECRET_REVEAL`, rate-limit 30/min/user). |
+| PATCH | `/api/projects/[slug]/email/rotation` | session, EDITOR | Active/règle la rotation auto (gated `org.rotationFeatureEnabled`). |
+
+**Rotation blue/green** : l'app lit la clé depuis son `.env` (propagé au redeploy), donc la révocation de l'ancienne clé est **différée d'un cycle** (fenêtre de grâce). Le cron (§4.18) crée la nouvelle clé + déclenche un redeploy, puis révoque l'ancienne au cycle suivant. Cf. [lib/rotators/pink-floyd-email.ts](../lib/rotators/pink-floyd-email.ts).
+
+UI : onglet **Email** au niveau projet (à droite de Coffre), 4 sous-onglets Détails / Envoi / Expéditeurs / Historique. Sécurité : cf. [security.md §3.15](security.md).
+
+---
+
+### 4.21 Backup automatisé des projets
+
+Sauvegarde automatique et **chiffrée GPG** des bases de données d'un projet, **zéro-touch** : aucun script à installer, aucune action manuelle sur les VPS, **sans changer la posture sécurité** (Physalis ne sort jamais en SSH, ne voit jamais les données en clair, ne détient jamais de clé privée). Validé en prod (2026-06-01). Spec : [steps-docs/backups-auto.md](steps-docs/backups-auto.md) ; contrat agent : [steps-docs/backup-agent-contract.md](steps-docs/backup-agent-contract.md).
+
+**Principe — livraison par FUSION.** À `POST /api/deploy`, si un backup est activé pour l'environnement déployé, Physalis **fusionne** un service `physalis-backup-agent` dans le `dockerCompose` qu'il sert déjà ([lib/compose-merge.ts](../lib/compose-merge.ts)). L'agent monte au `docker compose up` habituel, rejoint **le réseau du service DB** (résolution par nom), et n'a aucun port exposé. Désactivation propagée : si le backup est coupé, le service n'est plus fusionné → l'agent disparaît au prochain deploy.
+
+**Détection.** [lib/compose-detect.ts](../lib/compose-detect.ts) — `detectDatabases(dockerCompose, secrets)` repère les services DB (image postgres/mysql/mariadb), leur hôte (= nom du service), nom, user, et la **clé du secret mot de passe** (`POSTGRES_PASSWORD`…). Multi-DB. Pré-remplit le formulaire (champs éditables). Route `GET /api/projects/[slug]/backup/detect`.
+
+**Posture / secrets.** Les mots de passe DB sont **déjà** dans le `.env` du projet → l'agent les **référence** (`${VAR}`), Physalis ne les duplique pas. Physalis n'ajoute au `.env` servi que `BACKUP_TOKEN` (token agent) + `BACKUP_DEST_KEY_B64` (clé SSH destination, base64). La **paire GPG est générée par l'agent sur le VPS** ; la privée ne sort jamais ; Physalis ne stocke que la **pubkey** + fingerprint. Le token agent est stocké chiffré (injection) **et** hashé (vérification).
+
+**Modèle de données** (schéma tenant) : `ClientBackupConfig` (activation + **destination au niveau client** : `backupServerId` → Server + `backupPath` ; chemin effectif d'un projet = `{base}/{slug}`), `ProjectBackupConfig` (env source, planning, rétention, état, token agent), `ProjectBackupDatabase` (**1-N** : dbType/dbName/dbHost/dbUser/passwordSecretKey/port/enabled), `ProjectBackupEntry` (historique rempli par l'agent). Enums `BackupDbType`/`BackupEntryStatus`, actions `AccessAction` `BACKUP_*`.
+
+**Agent** (repo dédié `argo-web/physalis-backup-service`, image `ghcr.io/argo-web/physalis-backup-agent`) : sidecar alpine. 1ᵉʳ boot → génère la clé GPG (batch `%no-protection`) + publie la pubkey. Boucle (~60 s) : poll planning + `force` ; à l'échéance, pour chaque DB → `pg_dump`/`mysqldump | gzip | gpg --encrypt(pub) | rsync --mkpath` vers le VPS de destination, puis report. **Un agent par projet** (cloisonnement : chaque agent n'a que son réseau + ses secrets + son token).
+
+**Protocole agent ↔ Physalis** (auth `Authorization: Bearer sv_backup_*`, hors session) :
+
+| Méthode | Route | Description |
+|---|---|---|
+| POST | `/api/backup/agent/register` | Publie la pubkey GPG + fingerprint (1ʳᵉ exécution). |
+| GET | `/api/backup/agent/plan` | Planning (enabled, schedule, interval, retention, force) + liste DBs. Poll. |
+| POST | `/api/backup/agent/report` | Résultat d'un backup → `ProjectBackupEntry` + maj config + audit. |
+
+**API REST (UI)** : `GET/PATCH/DELETE /api/projects/[slug]/backup`, `POST …/backup/enable`, `POST …/backup/force`, `GET …/backup/entries`, `GET …/backup/detect`, `POST …/backup/agent-token` (révéler une fois — fallback hors-Physalis) ; `GET/POST/DELETE/PATCH /api/account/backup` (activation + destination, niveau client). **Watchdog** : [lib/backup-cron.ts](../lib/backup-cron.ts) (dead-man's switch — alerte si un backup attendu ne remonte pas ; n'exécute rien). Gating visibilité UI : `isBackupModuleEnabled(email)` (`BACKUP_ENABLED` ou allowlist `BACKUP_ALLOWED_EMAILS`).
+
+**Prérequis destination** (one-time par VPS de backup, comme un serveur de déploiement) : (a) clé SSH du `Server` autorisée pour l'utilisateur SSH ; (b) **chemin de base inscriptible** par cet utilisateur (`chown`). Durcissement prévu (V1.1) : clé en forced-command **`rrsync` append-only**.
+
+UI : onglet **Backup** au niveau projet (select env + table multi-DB éditable, « Forcer » avec loader + auto-refresh, historique) ; activation + destination au niveau client dans **Paramètres → Sécurité**.
+
+---
+
 ### 4.9 Codes de retour
 
 | Code | Cas |
@@ -631,6 +898,10 @@ Tables qui stockent des données chiffrées avec ce schéma :
 - `Server` : `encryptedKey`/`Iv`/`Tag` (clé SSH privée des VPS cibles)
 - `VaultEntry` (coffre perso) : `encryptedPassword`/`Iv`/`Tag` + `encryptedTotpSecret`/`Iv`/`Tag`
 - `TeamVaultEntry` (coffres d'équipe) : idem que `VaultEntry`
+- `Api` (mode JWT) : `jwtSecret`/`iv`/`tag`
+- `SecretVersion` / `OrgSecretVersion` : snapshot chiffré (même schéma AES-256-GCM)
+
+**Pas chiffré AES-256-GCM** : `ApiKey` (hash SHA-256 du token brut via `TokenIndex`, jamais reconstruit), `UserToken` / `OrgToken` (idem — uniquement hash stocké).
 
 Génération de la clé : `openssl rand -hex 32`.
 
@@ -639,6 +910,16 @@ Invariants :
 - **IV unique par appel** (donc deux chiffrements de la même valeur produisent des stockages différents).
 - **Auth tag GCM** vérifié à la lecture (corruption du payload ou du tag → exception au déchiffrement).
 - La clé est lue à chaque appel d'`encrypt`/`decrypt` via `getKey()`, qui valide la longueur 32B avant utilisation. Si `ENCRYPTION_KEY` change entre deux runs, les anciens secrets deviennent illisibles (pas de re-keying automatique).
+
+### 5.1 Backups plateforme — chiffrement par enveloppe (OpenBao, pilote)
+
+Le backup de Physalis lui-même (primaire → secondaire, `scripts/backup/`) migre du chiffrement **GPG** (clé privée colocalisée avec les archives sur le secondaire) vers un **chiffrement par enveloppe** adossé à un **KMS self-hosté** (OpenBao, moteur `transit`). Pilote **déployé et validé en réel** (2026-06-09/10), **en parallèle du GPG** jusqu'au cutover. Détail : [steps-docs/todo/openbao.md](steps-docs/todo/openbao.md) + [backup-pilote-openbao-plan.md](steps-docs/todo/backup-pilote-openbao-plan.md).
+
+- **Principe** : DEK AES-256 aléatoire **par archive** (format `.db.penv` = AES-256-CTR + HMAC-SHA256, *encrypt-then-MAC* — `openssl enc -aes-256-gcm` exclu car tag GCM non géré en CLI), wrappée par OpenBao (`transit/datakey`). Le **primaire** a la capacité `datakey` **seule** → il chiffre **sans pouvoir déchiffrer** ses backups ; le **secondaire** a `decrypt` **seule** → il déchiffre via `transit/decrypt`. La DEK ne touche **jamais** le disque. **PQ-safe** (wrap symétrique AES-256).
+- **Identités** : AppRole CIDR-bound, token TTL court ; `secret_id` en fichier `0600` livré en response-wrapping ; cert OpenBao **épinglé**.
+- **Scripts** : `scripts/backup/lib/penv.sh` (AEAD), `primary/physalis-dump-penv.sh`, `secondary/{penv-openbao.sh, physalis-pull-backup-penv.sh, physalis-restore-penv.sh, physalis-test-restore-penv.sh}`. Monitoring seal-status : `scripts/failover/secondary/secretvault-check-openbao.sh` (un reboot **rescelle** OpenBao single-node → backups muets sinon).
+- **À distinguer** des **backups projets clients** (§4.21, système ①, GPG) : ici c'est le backup **de la plateforme** (système ②). Même direction enveloppe+KMS prévue pour ① ensuite.
+- **Cible long terme** : OpenBao remplace aussi la `ENCRYPTION_KEY` statique (ci-dessus) — audit, rotation et scellement de la clé maîtresse — par migration champ par champ.
 
 ---
 
@@ -689,12 +970,97 @@ Les machine tokens ne sont **pas** affectés par la 2FA — c'est uniquement pou
 
 ### 6.4 Middleware
 
-[middleware.ts](../middleware.ts) — fait deux choses sur chaque requête HTML (matcher exclut `/api`, `/_next/*`, fichiers image et `.zip`, et skippe les prefetches RSC) :
+[middleware.ts](../middleware.ts) — fait trois choses sur chaque requête HTML (matcher exclut `/api`, `/_next/*`, fichiers image et `.zip`, et skippe les prefetches RSC) :
 
-1. **Génère un nonce** (16 bytes hex via Web Crypto), construit le header `Content-Security-Policy` strict (cf. §8.1), pose le nonce sur le header de requête `x-nonce` pour que Next.js l'applique aux scripts d'hydration, et met le CSP sur la response.
-2. **Auth check** : si la route préfixée `/dashboard`, `/projects`, `/orgs`, `/settings` ET pas de session → redirect `/login?callbackUrl=…`. Le CSP est posé aussi sur la réponse de redirect.
+1. **Routing locale** (i18n) : si le path n'a **pas** de préfixe `/fr/`, `/en/` ou `/es/`, redirige vers `/{locale}/{path}` où `locale` est résolu par cookie `NEXT_LOCALE`, sinon Accept-Language, sinon `defaultLocale` (`en`). Indispensable pour le routing App Router `[locale]/...`. La detection de tenant subdomain est faite séparément côté login-form (cf. §3.6) — le middleware ne fait aucune resolution de tenant.
+2. **Auth check** : si la route préfixée `/dashboard`, `/projects`, `/orgs`, `/settings` (après strip du préfixe locale) ET pas de session → redirect `/{locale}/login?callbackUrl=…`. Le préfixe locale est préservé pour ne pas perdre la langue de l'utilisateur.
+3. **Génère un nonce** (16 bytes hex via Web Crypto), construit le header `Content-Security-Policy` strict (cf. §8.1), pose le nonce sur le header de requête `x-nonce` pour que Next.js l'applique aux scripts d'hydration, et met le CSP sur la response (y compris les responses de redirect).
 
 Utilise [lib/auth.config.ts](../lib/auth.config.ts) (Edge-compatible) — pas d'import de bcrypt/otplib qui ne tournent pas en Edge runtime.
+
+> **Caveat cross-domain** : le redirect 307 du routing locale construit l'URL absolue à partir de `req.url`. Derrière Cloudflare avec rewrite de Host header, l'URL absolue peut pointer vers le mauvais host (typiquement `vault.physalis.cloud` au lieu du sous-domaine tenant), éjectant l'utilisateur de son tenant. C'est pourquoi tout `router.push("/foo")` ou `<Link href="/foo">` interne doit passer par les helpers `@/i18n/navigation` qui préfixent la locale côté client (cf. §6.5) — un path préfixé `/fr/foo` ne déclenche jamais le routing locale et reste sur le bon host.
+
+### 6.5 Internationalisation (next-intl)
+
+L'app est trilingue **FR / EN / ES** via [next-intl](https://next-intl.dev/) v3. Toutes les pages utilisateur vivent sous `app/[locale]/...` et le segment `[locale]` est résolu par le middleware (cf. §6.4).
+
+#### Configuration
+
+| Fichier | Rôle |
+|---|---|
+| [i18n/routing.ts](../i18n/routing.ts) | `defineRouting({ locales: ["en","fr","es"], defaultLocale: "en", localePrefix: "always" })`. La constante `routing` est consommée par le middleware ET par le helper de navigation. `localePrefix: "always"` signifie qu'aucune URL ne s'affiche sans préfixe — `/projects` est toujours redirigé vers `/{locale}/projects`. |
+| [i18n/request.ts](../i18n/request.ts) | `getRequestConfig` qui résout la locale active côté server components + charge le bundle de messages correspondant. |
+| [i18n/navigation.ts](../i18n/navigation.ts) | **Helper de navigation à utiliser dans tout le code client** (cf. plus bas). |
+| [messages/{en,fr,es}.json](../messages/) | Bundles de messages, structure imbriquée par namespace (`auth.login.*`, `dashboard.layout.*`, `projects.access.*`, etc.). FR fait foi (source de vérité), EN/ES doivent rester alignés. |
+
+Le bundle EN est volontairement notre `defaultLocale` côté next-intl — c'est la langue de fallback quand `Accept-Language` ne matche pas FR ou ES.
+
+#### Helper `@/i18n/navigation`
+
+**Règle de fer** : tout import depuis `next/link` ou `next/navigation` dans un composant `"use client"` rendu sous `app/[locale]/...` doit passer par `@/i18n/navigation`. Le helper expose :
+
+```ts
+import { Link, useRouter, usePathname, redirect, getPathname } from "@/i18n/navigation";
+```
+
+Ces wrappers préfixent automatiquement la locale courante :
+
+- `<Link href="/projects">` rend `<a href="/fr/projects">` quand la locale active est `fr`.
+- `router.push("/dashboard")` navigue vers `/fr/dashboard`.
+- `usePathname()` renvoie le path **sans** préfixe locale (utile pour les comparaisons d'active route).
+
+**Pourquoi c'est critique** : un `<Link>` ou un `router.push` venant de `next/link` / `next/navigation` ne préfixe rien et émet un path nu (`/projects`). Le middleware locale routing le redirige (`307 → /fr/projects`), mais le calcul de l'URL absolue derrière Cloudflare peut perdre le host original et envoyer l'utilisateur sur `vault.physalis.cloud` au lieu de son sous-domaine `<slug>.physalis.cloud`. La page `/fr/dashboard` rendue depuis vault déclenche alors le tenant-guard, l'éjecte vers `/fr/login` et boucle. La migration vers `@/i18n/navigation` (commit `6e031ab`) a corrigé 29 composants dashboard + 7 composants auth.
+
+**Exceptions** : `useSearchParams`, `useParams`, `notFound`, `redirect` (server actions) restent sur `next/navigation` — ils n'ont pas d'équivalent dans le helper. `next/image` reste tel quel.
+
+#### Côté server (RSC + server actions)
+
+```ts
+import { getLocale, getTranslations } from "next-intl/server";
+
+const locale = await getLocale();
+const t = await getTranslations("dashboard.layout");
+return <h1>{t("title")}</h1>;
+```
+
+Les fonctions qui construisent des URLs externes côté tenant doivent passer la locale :
+
+- `getTenantLoginUrl(plan, slug, { tenantDomain, sharedPortal, locale })` (cf. [lib/plans.ts](../lib/plans.ts)) — `locale` est optionnelle. Quand fournie (callers user-facing : login-resolve, dashboard logout, signup), l'URL retournée contient `/{locale}/login` au lieu de `/login` brut. Sans cette précaution, l'URL `https://<slug>.physalis.cloud/login` déclenche le routing locale du middleware + le caveat Cloudflare → éjection vers le portail partagé.
+- Pour les contextes admin multi-destinataires (création client, emails superadmin), `locale` est omise volontairement : le destinataire final peut être dans une langue différente, le middleware résoudra à partir de son `Accept-Language`.
+
+#### Côté client (composants)
+
+```tsx
+"use client";
+import { useLocale, useTranslations } from "next-intl";
+import { Link, useRouter } from "@/i18n/navigation";
+
+export default function MyComponent() {
+  const t = useTranslations("dashboard.nav");
+  const locale = useLocale();
+  const router = useRouter();
+  return <Link href="/projects">{t("projects")}</Link>;
+}
+```
+
+Pour les redirects entre sous-domaines (ex. extension auto-login `vault.* → <slug>.physalis.cloud`), construire l'URL avec la locale du composant : `https://${tenantSlug}.physalis.cloud/${locale}/login?autoLogin=1` plutôt que `/login` brut. Cf. [plugin-login-proposal.tsx:53](../app/[locale]/(auth)/login/plugin-login-proposal.tsx#L53).
+
+#### Sélecteur de langue
+
+[components/LocaleSwitcher.tsx](../components/LocaleSwitcher.tsx) — composant client partagé, affiché dans :
+
+- Le header du layout dashboard ([app/[locale]/(dashboard)/layout.tsx](../app/[locale]/(dashboard)/layout.tsx#L124))
+- Le coin haut-droit du layout auth ([app/[locale]/(auth)/layout.tsx](../app/[locale]/(auth)/layout.tsx)) — utile pour switcher avant de se connecter
+
+Au clic : pose un cookie `NEXT_LOCALE=<lang>` (TTL 1 an, `SameSite=Lax`, path `/`) **avant** de naviguer, pour que le middleware route correctement aux requêtes suivantes. Navigation via `router.push("/${next}${pathnameWithoutLocale}")` — le path conserve la page courante traduite.
+
+#### Ajouter une nouvelle clé
+
+1. Ajouter dans `messages/fr.json` (source de vérité) avec la structure imbriquée appropriée.
+2. Ajouter dans `messages/en.json` et `messages/es.json` la traduction correspondante au **même chemin imbriqué** (sinon next-intl renvoie la clé brute à l'exécution).
+3. Consommer avec `useTranslations("namespace")` côté client ou `await getTranslations("namespace")` côté server.
+
+Pour les chaînes paramétrées : `t("auth.welcome", { name: "Gael" })` avec `"welcome": "Bienvenue {name}"`. ICU MessageFormat supporté par défaut (plurals, sélecteurs, etc.).
 
 ---
 
@@ -801,6 +1167,7 @@ Vérifié à chaque route via `requireUser` → `requireOrgMember(slug, role)` o
 - `register` (`/api/auth/register`) : 3 / h / IP, appliqué **avant** le toggle `ALLOW_REGISTRATION`
 - `plugin-auth` (`/api/plugin/auth`) : 5 / 15 min / IP
 - `plugin-vault-write` (`/api/plugin/vault`) : 30 / min / user (auto-save extension)
+- `gateway-verify` (`/api/gateway/verify`) : 1000 / min / IP (global — pas par clé ; cf. §8.9)
 
 État au niveau module : adapté pour 1 instance ; à swapper pour Postgres / Redis si scaling horizontal.
 
@@ -810,6 +1177,7 @@ Quand un OrgADMIN/OWNER retire un membre via `DELETE /api/orgs/[slug]/members/[u
 1. `ProjectMember.deleteMany` pour les projets de l'org.
 2. `MachineToken.updateMany` : `revokedAt = now()` pour les tokens où `createdById = userId` ET `projectId in org.projects`.
 3. `OrgMember.delete`.
+4. **Purge prudente de l'orphelin** : si le user n'a plus aucun `OrgMember` ET un coffre perso vide → `User.delete` (sinon conservé). Cf. §3.5.
 
 Garde-fou : refus 409 si tentative de retirer/rétrograder le dernier OWNER de l'org.
 
@@ -844,11 +1212,16 @@ Actions tracées (cf. enum `AccessAction`) :
 
 Consultation via UI (`/orgs/[slug]/audit`, `/projects/[slug]/audit`) ou API (`?format=csv` pour export RFC 4180). FK SetNull = les logs survivent à la suppression des entités.
 
-### 8.9 Non couvert (à venir, voir [todo.md](todo.md))
+### 8.9 Non couvert
 
-- Rate limiting sur l'endpoint Bearer machine (token déjà 256 bits, faible priorité).
-- Rate limiting sur le login 2FA (héritera du rate-limit global sur `/callback/credentials`, mais une couche dédiée par utilisateur serait plus stricte).
-- Rotation automatique des secrets (workflow N8n).
+Items en backlog (détails et statut à jour dans [todo_v2.md](todo_v2.md)) :
+
+- **Rate limiting sur l'endpoint Bearer machine** (`/api/secrets/[slug]/[env]`) — token déjà 256 bits, brute-force impraticable. Utile pour détecter un token compromis en boucle. Faible priorité.
+- **Rate limiting sur le login 2FA** — héritera du rate-limit global sur `/callback/credentials` ; une couche dédiée par utilisateur serait plus stricte. Non priorisé.
+- **Rate limiting par clé API Gateway** (`/api/gateway/verify`) — actuellement 1000/min/IP global. Pas de limite par clé individuelle. Acceptable vu l'entropie (256 bits), mais un token compromis peut stresser le système.
+- **Audit `DEPLOY_DENIED` hors tenant** — les tentatives avec JWT invalide avant résolution du tenant ne sont pas auditées (probes externes trop bruyantes). Une table `admin.deploy_denied` pourrait tracer les abus répétés.
+- **Monitoring infrastructure** sur `/admin` (état serveurs, backups, replica WAL).
+- **Scans automatiques** OWASP ZAP / nuclei — actifs en CI (`deploy-staging.yml`, jobs `zap` et `nuclei`, lancés après chaque deploy staging).
 
 ---
 
@@ -863,7 +1236,11 @@ Consultation via UI (`/orgs/[slug]/audit`, `/projects/[slug]/audit`) ou API (`?f
 3. `builder` — `prisma generate` + `next build` (output `standalone`).
 4. `runner` — copie le bundle standalone, override `node_modules` par `prod-deps` + `.prisma` du builder, copie le schema + `scripts/`. Tourne en user `nextjs:nodejs`.
 
-CMD : `prisma migrate deploy && bootstrap-admin && node server.js`.
+CMD : `prisma migrate deploy && auto-apply-tenant-migrations.mjs && bootstrap-admin.mjs && node server.js`.
+
+`auto-apply-tenant-migrations.mjs` ([scripts/auto-apply-tenant-migrations.mjs](../scripts/auto-apply-tenant-migrations.mjs)) — rejoue les migrations Prisma sur tous les schémas `client_*` existants au démarrage. Indispensable lors d'un déploiement qui ajoute des colonnes au schéma tenant (sinon les tenants non-provisionnés après la migration ont un schéma obsolète).
+
+> **Caveat bootstrap** : si `_tenant_migration_log` d'un tenant est vide (première exécution), le script marque TOUTES les migrations actuelles comme appliquées sans les exécuter — il suppose que le tenant a été provisionné avec le schéma courant. Les tenants créés avant certaines migrations (ex. rotation 20260513+, api-gateway 20260515+) auront des colonnes manquantes. Symptôme : Prisma renvoie `P2022` sur des colonnes absentes (le `RETURNING *` implicite des `delete()`/`update()` sans `select` liste toutes les colonnes du modèle). Fix : appliquer manuellement les `ALTER TABLE` manquants via psql, puis les marquer dans `_tenant_migration_log`. Pour les nouveaux tenants : toujours les provisionner APRÈS que les migrations aient tourné sur le schéma template.
 
 ### 9.2 Docker Compose
 
@@ -896,25 +1273,48 @@ CMD : `prisma migrate deploy && bootstrap-admin && node server.js`.
 | `NEXTAUTH_URL` | URL canonique (https). Fallback pour `buildAcceptUrl` si pas de `Host` header | — |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Bootstrap 1er admin | utilisé si `User` table vide |
 | `ALLOW_REGISTRATION` | `"true"` ouvre `/register` | défaut `"false"` |
-| `EMAIL_MAILGUN_API_KEY` | Clé API Mailgun (active le transport email) | dashboard Mailgun |
+| `EMAIL_PINKFLOYD_URL` | URL du relay pink-floyd (active le transport principal). Sans cette var, fallback automatique vers Mailgun puis stub | `https://pink-floyd.argoweb.fr` |
+| `EMAIL_PINKFLOYD_API_KEY` | Clé API pink-floyd (`ph_live_sk_*`) — header `x-api-key` | côté pink-floyd, à régénérer en cas de fuite |
+| `EMAIL_MAILGUN_API_KEY` | Clé API Mailgun (fallback historique, conservé pendant la transition) | dashboard Mailgun |
 | `EMAIL_MAILGUN_DOMAIN` | Domaine vérifié Mailgun (ex. `mail.physalis.cloud`) | dashboard Mailgun (DNS SPF + DKIM actifs) |
 | `EMAIL_MAILGUN_HOST` | Endpoint API Mailgun | `api.mailgun.net` (US) ou `api.eu.mailgun.net` (EU) |
-| `EMAIL_FROM` | From: header (optionnel, format `Name <addr>`) | défaut `Physalis <noreply@${EMAIL_MAILGUN_DOMAIN}>` |
+| `EMAIL_FROM` | Adresse expéditeur. pink-floyd **exige un email pur** (`contact@physalis.cloud`), pas le format RFC `Name <addr>`. Mailgun accepte les deux | défaut `contact@physalis.cloud` |
+| `CRON_SECRET` | Auth `X-Cron-Secret` sur `/api/cron/*` et routes rotation admin N8n. Comparaison en `timingSafeEqual`. | `openssl rand -hex 32` (≥ 32 bytes recommandé) |
+| `ROTATION_HMAC_KEY` | Signature HMAC-SHA256 des tokens callback N8n (window ±1h). Partagé entre Physalis et le workflow N8n. | `openssl rand -hex 32` |
+| `ROTATION_N8N_WEBHOOK_URL` | URL du webhook N8n pour la stratégie `DATABASE` | URL du workflow N8n |
+| `STRIPE_SECRET_KEY` | Clé secrète Stripe (sk_live_* ou sk_test_*) | Dashboard Stripe |
+| `STRIPE_WEBHOOK_SECRET` | Secret de validation des webhooks Stripe (`whsec_*`) | Dashboard Stripe → Webhooks |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Clé publiable Stripe (exposée côté client) | Dashboard Stripe |
+| `STRIPE_PRICE_SHARED_MONTHLY` | Price ID Stripe pour le plan SHARED mensuel | Dashboard Stripe |
+| `STRIPE_PRICE_DEDICATED_MONTHLY` | Price ID Stripe pour le plan DEDICATED mensuel | Dashboard Stripe |
+| `NEXT_PUBLIC_PHYSALIS_MARKETING_URL` | URL du site marketing (liens "En savoir plus" sur les plans) | défaut `https://physalis.cloud` |
+| `PROJECT_NAME` | Nom du project Docker Compose (préfixe des containers/volumes). Conservé `secretvault` sur le VPS prod pour compatibilité des volumes existants. | défaut dans compose : `secretvault` |
 
 ### 9.4 Bootstrap admin
 
 [scripts/bootstrap-admin.mjs](../scripts/bootstrap-admin.mjs) — appelé par le CMD du runtime. Si la table `User` est vide : crée le 1er user avec `User.role = ADMIN` ET son organisation par défaut (slug = handle email, déduplication automatique en cas de collision) avec un OrgMember(OWNER). No-op sinon.
 
-### 9.5 Email transport (Mailgun)
+### 9.5 Email transport (pink-floyd + Mailgun fallback)
 
 [lib/email.ts](../lib/email.ts) expose `sendEmail()` et `sendInvitationEmail()`. Le transport est sélectionné au runtime selon les variables d'environnement présentes (premier match) :
 
-1. `EMAIL_MAILGUN_API_KEY` + `EMAIL_MAILGUN_DOMAIN` → **Mailgun** (provider actif en prod)
-2. *(rien)* → stdout stub (dev par défaut, log le message au lieu de l'envoyer)
+1. `EMAIL_PINKFLOYD_URL` + `EMAIL_PINKFLOYD_API_KEY` → **pink-floyd** (provider actif en prod depuis 2026-05)
+2. `EMAIL_MAILGUN_API_KEY` + `EMAIL_MAILGUN_DOMAIN` → **Mailgun** (fallback de transition)
+3. *(rien)* → stdout stub (dev par défaut, log le message au lieu de l'envoyer)
 
-L'instance du transport est mise en cache au niveau module (lazy + une seule fois pour la durée du process), donc `mailgun.js` n'est ni ré-importé ni recompilé à chaque appel.
+L'instance du transport est mise en cache au niveau module (lazy + une seule fois pour la durée du process). Retirer les 2 env vars `EMAIL_PINKFLOYD_*` rollback vers Mailgun sans modifier le code ni redéployer l'image.
 
-Implémentation Mailgun :
+#### pink-floyd
+
+Relay HTTP self-hosted (Nodemailer + Redis derrière) sur `https://pink-floyd.argoweb.fr`. Permet de couper la dépendance Mailgun, d'utiliser un sender propre (`contact@physalis.cloud`) et de centraliser la délivrabilité avec les autres services Argoweb.
+
+- Endpoint : `POST ${EMAIL_PINKFLOYD_URL}/v1/send`
+- Auth : header `x-api-key: <key>`
+- Body : `{ from, to, subject, text, html? }` — `from` doit être un email pur (pas le format RFC `Display Name <addr>`), validation Zod stricte côté pink-floyd
+- Succès : `202 Accepted` + `{ success: true, messageId, queued: true }` — l'email est enfilé dans Redis, l'envoi réel est asynchrone
+- Erreurs : `400` sender non enregistré, `401` clé invalide, `500` backend down
+
+#### Mailgun (fallback)
 
 - `mailgun.js` + `form-data` (deps déclarées en runtime).
 - Endpoint : `https://${EMAIL_MAILGUN_HOST}` (`api.mailgun.net` par défaut, `api.eu.mailgun.net` pour la région EU).
@@ -925,10 +1325,11 @@ Pour ajouter d'autres providers (Resend, SMTP…), implémenter une nouvelle fon
 
 Les URLs d'invitation sont dérivées du `Host` header de la requête HTTP (cf. `buildAcceptUrl(token, req)` dans [lib/invitations.ts](../lib/invitations.ts)) — fonctionne quel que soit le mode d'accès (localhost, IP WSL, domaine prod).
 
-Prérequis Mailgun pour la délivrabilité :
+Prérequis délivrabilité (vrai pour les deux providers) :
 
-- Domaine vérifié dans Mailgun (statut « Active »), DNS SPF + DKIM en place.
+- Domaine `physalis.cloud` configuré avec SPF + DKIM côté provider (pink-floyd : DNS sur le relay ; Mailgun : statut « Active »).
 - Pour Gmail : ajouter un record DMARC `p=none` minimum (sinon les premiers emails partent en Promotions ou en Spam).
+- Sender utilisé : `contact@physalis.cloud` (pas de display name dans `EMAIL_FROM`, pink-floyd ajoute lui-même le nom d'expéditeur côté backend si configuré).
 
 ---
 
@@ -1019,7 +1420,34 @@ Secrets GitHub à créer (Settings → Secrets and variables → Actions) :
 | `SERVER_IP` | IP ou hostname du VPS |
 | `GHCR_PAT` | Personal Access Token GitHub avec scopes `read:packages` + `write:packages` (Settings → Developer settings → Tokens classic) |
 
-### 10.4 Côté projet client (consommer les secrets)
+### 10.4 Staging & merge vers production
+
+Le workflow de mise en production passe par la branche `staging` avant `main`.
+
+**1. Push sur `staging`** → déclenche `deploy-staging.yml` ([.github/workflows/deploy-staging.yml](../.github/workflows/deploy-staging.yml)) :
+
+| Job | Description |
+|---|---|
+| `test` | Install + `prisma generate` + `tsc --noEmit` + lint + unit tests |
+| `build` | Build image Docker, push sur GHCR (tags `:${SHA}` et `:staging`) |
+| `deploy-staging` | SSH sur le VPS : pull image, `prisma migrate deploy` + `auto-apply-tenant-migrations.mjs`, `docker compose up -d`, health check `staging.physalis.cloud` |
+| `e2e` | Suite Playwright (5 specs, ~13 tests) contre `staging.physalis.cloud` — rapport artifact 7 jours |
+| `zap` | OWASP ZAP baseline scan (passif) contre l'URL staging |
+| `nuclei` | Scan CVE + misconfigs (severity ≥ medium) |
+
+Les jobs `e2e`, `zap` et `nuclei` tournent en parallèle après `deploy-staging`.
+
+**2. Merge `staging` → `main`** via PR GitHub :
+
+- S'assurer que les jobs `e2e`, `zap` et `nuclei` sont verts sur le dernier commit staging.
+- La PR peut être mergée dès que la pipeline staging est entièrement verte — aucune étape manuelle supplémentaire requise côté code.
+- La DB de production n'est **pas** partagée avec staging : les migrations Prisma s'appliquent indépendamment sur chaque env au démarrage du conteneur.
+
+**3. Push sur `main`** → déclenche `deploy.yml` (pipeline prod) : test → build (tags `:${SHA}` + `:latest`) → deploy prod (même mécanique SSH, sans E2E ni scans).
+
+> **Sécurité des tenants lors d'un déploiement** : `auto-apply-tenant-migrations.mjs` rejoue toutes les migrations sur les schémas `client_*` existants. Si un tenant a été provisionné avant l'ajout d'une migration, s'assurer qu'il n'a pas été bootstrappé sans que ses migrations aient tourné (cf. [§9.1](#91-dockerfile) — caveat bootstrap).
+
+### 10.5 Côté projet client (consommer les secrets)
 
 [scripts/inject-secrets.sh](../scripts/inject-secrets.sh) — injection au moment du `docker compose up` :
 
@@ -1036,7 +1464,7 @@ Sortie : `KEY="value"` avec échappement complet (`\\`, `\"`, `\$`, `` \` ``). L
 
 Codes retour : 0 OK, 1 mauvais usage, 2 token absent, 3 erreur réseau / API.
 
-### 10.5 Migration OIDC d'un workflow GitHub
+### 10.6 Migration OIDC d'un workflow GitHub
 
 Approche **post-Megalodon** : aucune clé ni PAT dans GitHub Secrets. Le runner s'authentifie par OIDC, le vault valide une `Policy` stricte avant de retourner le bundle de déploiement.
 
@@ -1069,7 +1497,7 @@ Template prêt à copier : [docs/deploy-oidc.yml](deploy-oidc.yml). Fonctionneme
 | Secrets env `GHCR_*` (transition phase) | supprimés — remplacés par `bundle.registry` au niveau org |
 | Workflow `deploy.yml` ancien | remplacé par [docs/deploy-oidc.yml](deploy-oidc.yml) |
 
-### 10.6 Backup chiffré & Failover
+### 10.7 Backup chiffré & Failover
 
 Deux mécanismes complémentaires sont en place sur l'infra prod (Ginko ↔ VPS secondaire) :
 
@@ -1103,7 +1531,7 @@ Le forced-command côté primary passe par `/usr/local/bin/backup-dispatch.sh` q
 | Monitoring | healthchecks.io (heartbeat externe, alerte si silence > 25h) |
 | Escrow | `ENCRYPTION_KEY` + clé GPG privée dans Vaultwarden partagé |
 
-Scripts livrés dans [scripts/backup/](../scripts/backup/) (`primary/` + `secondary/`) avec [README d'install](../scripts/backup/README.md). Procédure complète + runbook de basculement dans [todo-backup-failover.md](todo-backup-failover.md). État de l'install actuelle dans [doc-install-backup.md](doc-install-backup.md). Réplication WAL dans [replication-wal.md](replication-wal.md).
+Scripts livrés dans [scripts/backup/](../scripts/backup/) (`primary/` + `secondary/`) avec [README d'install](../scripts/backup/README.md). Procédure complète + runbook de basculement dans [todo-backup-failover.md](steps-docs/done/todo-backup-failover.md). État de l'install actuelle dans [doc-install-backup.md](doc-install-backup.md). Réplication WAL dans [replication-wal.md](replication-wal.md).
 
 ---
 
@@ -1113,17 +1541,21 @@ Deux tiers indépendantes, chacune avec sa config vitest.
 
 ### 11.1 Unit (`npm test`)
 
-133 tests, ~8 s. Aucune dépendance externe (pas de DB, pas d'app live). Couvre :
-- `lib/crypto.ts` — roundtrip AES-256-GCM, IV unique, tampering détection (11)
-- `lib/auth-token.ts` — format `sv_<hex>`, hash SHA-256 stable + déterministe, entropie (7)
-- `lib/rate-limit.ts` — fenêtre fixe, headers RFC, isolation IP/scope (11)
-- `lib/validation.ts` — slugify, secret/env/email/server/repo/workflow/branch, defaultDeployPath (39)
-- `lib/totp.ts` — TOTP roundtrip, backup codes bcrypt (12)
-- `lib/oidc.ts` — JWT verify avec faux issuer in-process (signature, iss, aud, exp, claims) (10)
-- `lib/categories.ts` — validation des catégories de secret (4)
-- `lib/plugin-token.ts` — format `sv_plugin_<hex>`, hash, validation TTL env var, isAllowedTtl whitelist (19)
-- `lib/generate-password.ts` — base64url, longueur, entropie, bornes 12-64 (8)
-- `lib/otpauth-parse.ts` — base32 valide, parser otpauth:// totp, normalisation casse/espaces, rejet hotp (12)
+283 tests, ~8 s, 25 fichiers. Aucune dépendance externe (pas de DB, pas d'app live). Couvre :
+- `lib/crypto.ts` — roundtrip AES-256-GCM, IV unique, tampering détection
+- `lib/auth-token.ts` — format `sv_<hex>`, hash SHA-256 stable + déterministe, entropie
+- `lib/rate-limit.ts` — fenêtre fixe, headers RFC, isolation IP/scope
+- `lib/validation.ts` — slugify, secret/env/email/server/repo/workflow/branch, defaultDeployPath
+- `lib/totp.ts` — TOTP roundtrip, backup codes bcrypt
+- `lib/oidc.ts` — JWT verify avec faux issuer in-process (signature, iss, aud, exp, claims)
+- `lib/categories.ts` — validation des catégories de secret
+- `lib/plugin-token.ts` — format `sv_plugin_<hex>`, hash, validation TTL env var, isAllowedTtl whitelist
+- `lib/generate-password.ts` — base64url, longueur, entropie, bornes 12-64
+- `lib/otpauth-parse.ts` — base32 valide, parser otpauth:// totp, normalisation casse/espaces, rejet hotp
+- `lib/integration-token.ts` — UserToken / OrgToken : format, hash, scope enforcement
+- `lib/secret-request.ts` / `lib/secret-request-crypto.ts` — ECDH keypair, hash, TTL, statuts dérivés
+- `lib/rotation-*.ts` — validation intervalles, HMAC callback, stratégies
+- Divers : account-enumeration (timing attack), audit, billing helpers
 
 Config : [vitest.config.ts](../vitest.config.ts) — include `tests/lib/**/*.test.ts`.
 
@@ -1131,7 +1563,7 @@ Lancé automatiquement en CI (job `test` du workflow).
 
 ### 11.2 Intégration (`npm run test:integ`)
 
-50+ tests, ~30 s. Nécessite la stack docker compose **up** :
+26 fichiers, ~30 s. Nécessite la stack docker compose **up** :
 
 ```bash
 docker compose up -d
@@ -1142,12 +1574,94 @@ Les tests appellent l'app sur `localhost:3001` (override avec `TEST_BASE_URL=…
 
 Config : [vitest.integ.config.ts](../vitest.integ.config.ts) — include `tests/integ/**/*.test.ts`. Séquentiel pour partager la stack live ; chaque file utilise un préfixe de noms unique + `X-Forwarded-For` fictif pour isoler les buckets de rate-limit.
 
-Couverture : auth Bearer (14), RBAC (9), DB encryption (4), headers (3), rate-limit (3), 2FA (17), servers + env link (12), policies + /api/deploy denial paths (10).
+Couverture : auth Bearer (14), RBAC (9), DB encryption (4), headers (3), rate-limit (3), 2FA (17), servers + env link (12), policies + /api/deploy denial paths (10), integration tokens UserToken/OrgToken, rotation, API Gateway, secret-requests, versioning.
 
 **Pas en CI pour l'instant** — nécessiterait un job qui spin up Docker dans le runner. À ajouter quand l'infra CI sera prête.
 
+### 11.3 E2E (`npm run test:e2e`)
+
+5 specs Playwright (Chromium), 11 tests ✓ / 2 skipped. Séquentielles (01→05) — chaque spec dépend de la précédente :
+
+| Spec | Description |
+|---|---|
+| `01-auth.spec.ts` | Login / logout, redirect si non authentifié |
+| `02-project-crud.spec.ts` | Crée le projet `e2e-test` (utilisé par 03-04-05) |
+| `03-secrets.spec.ts` | CRUD secrets sur projet e2e-test |
+| `04-rotation-config.spec.ts` | Configuration rotation DATABASE (skip si feature désactivée) |
+| `05-api-gateway.spec.ts` | Flow complet API → clé → suppression ; cleanup projet en `afterAll` |
+
+Config : [playwright.config.ts](../playwright.config.ts). Variables d'env : `TEST_TENANT_SLUG`, `TEST_ADMIN_EMAIL`, `TEST_ADMIN_PASSWORD`, `E2E_PROJECT_SLUG`. Guide des anti-patterns : [tests/e2e/SPEC_GUIDE.md](../tests/e2e/SPEC_GUIDE.md).
+
+Lancé localement avec la stack docker compose up — `npm run test:e2e`.
+
+**En CI** — les E2E tournent automatiquement à chaque push sur `staging` (job `e2e` dans `deploy-staging.yml`), après le deploy et le health check. Variables injectées depuis les GitHub Secrets (`E2E_BASE_URL`, `TEST_ADMIN_EMAIL`, `TEST_ADMIN_PASSWORD`, `TEST_TENANT_SLUG`, `E2E_PROJECT_SLUG`, `E2E_ENV`). Le rapport Playwright est uploadé comme artifact (7 jours de rétention).
+
 ---
 
-## 12. Points d'extension connus
+## 12. Rotation automatique des secrets (Phase 12)
 
-Voir [todo.md](todo.md) pour les fonctionnalités planifiées (rotation, SDK, CSP stricte, tests E2E Playwright, etc.).
+### 12.1 Vue d'ensemble
+
+Rotation des mots de passe DB et secrets applicatifs selon un intervalle configurable, orchestrée via N8n. Chaque secret peut être configuré indépendamment.
+
+**Stratégies disponibles :**
+
+| Stratégie | Catégorie principale | Mécanisme |
+|-----------|---------------------|-----------|
+| `DATABASE` | `database` | N8n se connecte en DB, applique le pattern alternating-user, rappelle Physalis via callback HMAC |
+| `JWT_SECRET` | `infra` | Rotation locale en DB (nouveau `crypto.randomBytes(64)`), déclenche un `workflow_dispatch` GitHub Actions si `Project.githubRepo` configuré |
+| `WEBHOOK` | toutes | Physalis appelle `Secret.rotationWebhookUrl` (payload signé HMAC) ; le service externe applique la rotation et rappelle le callback |
+| `REMINDER` | toutes | Rappel sans changement automatique (audit + email si configuré) |
+| `API_KEY` | (API Gateway) | Révoque l'`ApiKey` liée, crée une nouvelle clé via l'API Gateway, met à jour la valeur du `Secret` |
+
+> Le bouton "Rotation" est visible dans `secrets-panel.tsx` pour les secrets `category = database` dont la clé contient `password`, et pour tous les secrets `category = infra`. La stratégie `API_KEY` s'affiche uniquement si le secret est lié à une `ApiKey` (`apiKeyId` non null).
+
+### 12.2 Engine cron
+
+[lib/rotation-cron.ts](../lib/rotation-cron.ts) — appelé toutes les heures via `POST /api/cron/rotation` (auth `X-Cron-Secret`). Itère tous les clients ACTIVE/TRIAL, entre dans chaque schéma tenant, sélectionne les secrets avec `rotationNextAt ≤ now` et `rotationEnabled = true`.
+
+**Cron N8n** : workflow Schedule Trigger (toutes les heures) → HTTP POST `/api/cron/rotation`.
+
+> ⚠️ **Point de vigilance en croissance** : le cron itère séquentiellement tous les tenants ACTIVE/TRIAL. Sur PostgreSQL multi-tenant avec des dizaines de schémas, la durée totale d'exécution peut croître linéairement. Ce n'est pas problématique à court terme, mais à surveiller. Pistes d'amélioration : index composite `(rotationEnabled, rotationNextAt)` dans chaque schéma tenant + limite de concurrence dans la boucle (`Promise.allSettled` sur N tenants en parallèle plutôt que `for…of` séquentiel).
+
+### 12.3 Pattern alternating user (DATABASE / PostgreSQL)
+
+```
+1. Connexion en tant que <databaseUser> (mdp actuel depuis Physalis)
+2. CREATE USER physalis_temp_<ts> WITH SUPERUSER PASSWORD '<tempPassword>'
+3. Connexion en tant que physalis_temp → ALTER USER <databaseUser> WITH PASSWORD '<newPassword>'
+4. Connexion en tant que <databaseUser> (nouveau mdp) → DROP USER physalis_temp_<ts>
+5. PATCH /api/rotation/admin/secret-value → chiffre + stocke newPassword
+6. POST callbackUrl (HMAC token) → Physalis marque rotationLastStatus = 'success'
+7. Si Project.githubRepo configuré → POST GitHub workflow_dispatch (redeploy)
+```
+
+MySQL et MariaDB suivent le même pattern (`GRANT ALL PRIVILEGES WITH GRANT OPTION` pour le temp user).
+
+**Sécurité des mots de passe générés** : charset `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~` (RFC 3986 unreserved — jamais besoin d'encoder dans `DATABASE_URL`).
+
+### 12.4 Redeploy automatique post-rotation
+
+Commun aux stratégies DATABASE et JWT_SECRET. L'URL est dérivée automatiquement depuis `Project.githubRepo` + `Project.githubWorkflow` :
+
+```
+https://api.github.com/repos/<githubRepo>/actions/workflows/<githubWorkflow>/dispatches
+```
+
+`GITHUB_DISPATCH_TOKEN` lu depuis les OrgSecrets du client au moment du trigger (décrypté AES-256-GCM, jamais stocké sur Secret).
+
+- **DATABASE** : inclus dans le payload envoyé à N8n, qui déclenche lui-même le `workflow_dispatch` avec `Authorization: Bearer <token>`.
+- **JWT_SECRET** : déclenché directement par `lib/rotators/jwt.ts` après écriture en DB. Le `ref` est `"main"` si `envName = "production"`, sinon le nom de l'environnement.
+
+### 12.5 Variables d'environnement
+
+| Variable | Usage |
+|----------|-------|
+| `CRON_SECRET` | Auth `X-Cron-Secret` sur `/api/cron/rotation` + auth N8n admin routes |
+| `ROTATION_HMAC_KEY` | Signature des tokens callback N8n (window ±1h) |
+| `ROTATION_N8N_WEBHOOK_URL` | URL du webhook N8n pour la stratégie DATABASE |
+| `GITHUB_DISPATCH_TOKEN` | Stocké dans OrgSecrets Physalis (pas en env app) |
+
+### 12.6 Points d'extension connus
+
+Voir [todo_v2.md](todo_v2.md) pour les fonctionnalités planifiées.

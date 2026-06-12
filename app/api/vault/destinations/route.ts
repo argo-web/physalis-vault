@@ -29,7 +29,7 @@ import { NextResponse } from "next/server";
 import type { VaultRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/api";
-import { isPlatformAdmin } from "@/lib/roles";
+import { isPlatformAdmin, hasDevPrivileges } from "@/lib/roles";
 
 const VAULT_ROLE_RANK: Record<VaultRole, number> = {
   VIEWER: 1,
@@ -85,7 +85,7 @@ export async function GET() {
     .filter((m) => m.role === "OWNER" || m.role === "ADMIN")
     .map((m) => m.organization.id);
   const devOrgIds = orgMemberships
-    .filter((m) => m.role === "DEV")
+    .filter((m) => hasDevPrivileges(m.role))
     .map((m) => m.organization.id);
   const adminOrgIdSet = new Set(adminOrgIds);
 
@@ -175,9 +175,10 @@ export async function GET() {
   const vaultRoleByCollection = new Map<string, VaultRole>(
     vaultMemberships.map((m) => [m.collectionId, m.role]),
   );
-  const orgRoleByOrg = new Map<string, "OWNER" | "ADMIN" | "DEV" | "MEMBER">(
-    orgMemberships.map((m) => [m.organization.id, m.role]),
-  );
+  const orgRoleByOrg = new Map<
+    string,
+    "OWNER" | "ADMIN" | "ADMIN_DEV" | "DEV" | "MEMBER"
+  >(orgMemberships.map((m) => [m.organization.id, m.role]));
 
   function effectiveRole(c: {
     id: string;

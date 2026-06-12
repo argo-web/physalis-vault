@@ -12,6 +12,7 @@ import {
   Session,
   adminSession,
   postJson,
+  patchJson,
   deleteReq,
   BASE_URL,
   TENANT_SCHEMA,
@@ -33,6 +34,13 @@ beforeAll(async () => {
   const data = (await res.json()) as { project: { id: string; slug: string } };
   projectSlug = data.project.slug;
   projectId = data.project.id;
+
+  // Le repo des policies est désormais dérivé du repo projet (source unique).
+  // On le définit ici pour que la création de policy soit possible.
+  const patch = await patchJson(admin, `/api/projects/${projectSlug}`, {
+    githubRepo: "argo-web/voyages",
+  });
+  if (patch.status !== 200) throw new Error(`setup repo: ${patch.status}`);
 });
 
 afterAll(async () => {
@@ -42,34 +50,43 @@ afterAll(async () => {
 });
 
 describe("Policy CRUD", () => {
-  it("POST crée une policy (201) et retourne l'env name", async () => {
+  it("POST crée une policy (201), hérite du repo projet et retourne l'env name", async () => {
     const res = await postJson(admin, `/api/projects/${projectSlug}/policies`, {
-      repo: "argo-web/voyages",
       workflow: "deploy.yml",
       branch: "main",
       environment: "production",
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as {
-      policy: { id: string; environment: string };
+      policy: { id: string; environment: string; repo: string };
     };
     expect(data.policy.environment).toBe("production");
+    // Le repo n'est plus saisi : il provient de Project.githubRepo.
+    expect(data.policy.repo).toBe("argo-web/voyages");
     policyId = data.policy.id;
   });
 
-  it("POST refuse un repo invalide → 400", async () => {
-    const res = await postJson(admin, `/api/projects/${projectSlug}/policies`, {
-      repo: "bad-repo-no-slash",
-      workflow: "deploy.yml",
-      branch: "main",
-      environment: "production",
+  it("POST refuse si le repo projet n'est pas défini → 400", async () => {
+    const create = await postJson(admin, "/api/projects", {
+      name: `pol-norepo-${SUFFIX}`,
     });
-    expect(res.status).toBe(400);
+    const proj = (await create.json()) as { project: { slug: string } };
+    try {
+      const res = await postJson(
+        admin,
+        `/api/projects/${proj.project.slug}/policies`,
+        { workflow: "deploy.yml", branch: "main", environment: "production" },
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      await deleteReq(admin, `/api/projects/${proj.project.slug}`).catch(
+        () => {},
+      );
+    }
   });
 
   it("POST refuse un workflow sans extension yml → 400", async () => {
     const res = await postJson(admin, `/api/projects/${projectSlug}/policies`, {
-      repo: "argo-web/voyages",
       workflow: "deploy",
       branch: "main",
       environment: "production",
@@ -79,7 +96,6 @@ describe("Policy CRUD", () => {
 
   it("POST refuse un environnement inconnu → 400", async () => {
     const res = await postJson(admin, `/api/projects/${projectSlug}/policies`, {
-      repo: "argo-web/voyages",
       workflow: "deploy.yml",
       branch: "main",
       environment: "non-existent",
@@ -89,7 +105,6 @@ describe("Policy CRUD", () => {
 
   it("POST refuse un duplicat → 409", async () => {
     const res = await postJson(admin, `/api/projects/${projectSlug}/policies`, {
-      repo: "argo-web/voyages",
       workflow: "deploy.yml",
       branch: "main",
       environment: "production",
@@ -104,6 +119,25 @@ describe("Policy CRUD", () => {
       policies: Array<{ id: string }>;
     };
     expect(data.policies.find((p) => p.id === policyId)).toBeDefined();
+  });
+
+  it("PATCH du repo projet resync le repo des policies existantes", async () => {
+    const patch = await patchJson(admin, `/api/projects/${projectSlug}`, {
+      githubRepo: "argo-web/voyages-v2",
+    });
+    expect(patch.status).toBe(200);
+
+    const res = await admin.fetch(`/api/projects/${projectSlug}/policies`);
+    const data = (await res.json()) as {
+      policies: Array<{ id: string; repo: string }>;
+    };
+    const p = data.policies.find((x) => x.id === policyId);
+    expect(p?.repo).toBe("argo-web/voyages-v2");
+
+    // Remet la valeur initiale pour ne pas perturber d'éventuels tests suivants.
+    await patchJson(admin, `/api/projects/${projectSlug}`, {
+      githubRepo: "argo-web/voyages",
+    });
   });
 
   it("DELETE supprime la policy (200)", async () => {

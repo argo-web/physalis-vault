@@ -42,14 +42,19 @@ model User {
   vaultEntries         VaultEntry[]
   vaultCollections     VaultCollection[]
   teamVaultMemberships TeamVaultMember[]
+  userTokens           UserToken[]
+  orgTokensCreated     OrgToken[]        @relation("orgTokenCreator")
   oneTimeShares        OneTimeShare[]    @relation("oneTimeShareCreator")
   accessLogs           AccessLog[]       @relation("accessLogActor")
   secretRequests       SecretRequest[]   @relation("secretRequestCreator")
   secretVersions       SecretVersion[]   @relation("secretVersionCreator")
   orgSecretVersions    OrgSecretVersion[] @relation("orgSecretVersionCreator")
-  userTokens           UserToken[]
-  orgTokensCreated     OrgToken[]        @relation("orgTokenCreator")
+  apiKeysCreated       ApiKey[]          @relation("apiKeyCreator")
   createdAt            DateTime          @default(now())
+  /// #5 — borne basse de validité des sessions : tout JWT émis avant cette
+  /// date est rejeté par requireUser(). Posé au reset password / 2FA disable
+  /// pour couper les sessions existantes. NULL = jamais invalidé (legacy).
+  sessionsValidFrom    DateTime?
 }
 
 model PluginToken {
@@ -82,7 +87,201 @@ model Organization {
   secretRequests         SecretRequest[]
   orgTokens              OrgToken[]
   rotationFeatureEnabled Boolean               @default(false)
+  // ─── Cloisonnement orgs (refonte pricing) ──────────────────────────
+  /// org principale = compte général du tenant. Ses quotas sont DÉRIVÉS
+  /// du plan (PLAN_QUOTAS + client.extra*) ; les champs maxX ci-dessous
+  /// sont ignorés pour la primaire. Les orgs ajoutées portent leur
+  /// propre bundle isolé (ADDON_ORG_BUNDLE).
+  isPrimary              Boolean               @default(false)
+  /// Quotas isolés des orgs AJOUTÉES (defaults = ADDON_ORG_BUNDLE).
+  maxServers             Int                   @default(2)
+  maxOidcProjects        Int                   @default(10)
+  /// Posé pour le futur — emails restent métrés au niveau client (non
+  /// branché par org en Phase B).
+  maxEmailsPerMonth      Int                   @default(1000)
+  extraEmails            Int                   @default(0)
+  /// Sièges propres à l'org (confinés, isolés du pool global du plan).
+  maxSeats               Int                   @default(2)
   createdAt              DateTime              @default(now())
+}
+
+/// Configuration email Pink-Floyd au niveau CLIENT (tenant) — singleton par
+/// schéma tenant. Le compte Pink-Floyd est créé avec `externalRef = tenantSlug`
+/// (globalement unique, contrairement au slug d'org qui ne l'est qu'au sein du
+/// tenant). `accountId` = compte partagé par TOUS les projets/orgs du client.
+/// `enabled` : interrupteur explicite. `tenantSlug` sert de clé d'upsert.
+model ClientEmailConfig {
+  id         String   @id @default(cuid())
+  tenantSlug String   @unique
+  enabled    Boolean  @default(false)
+  accountId  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/// Interrupteur du service de backup automatisé au niveau CLIENT (tenant) —
+/// singleton par schéma tenant, comme ClientEmailConfig. `enabled` = master
+/// switch ; la config par projet (ProjectBackupConfig, cf. spec backups-auto.md)
+/// viendra ensuite et exigera ce switch.
+model ClientBackupConfig {
+  id         String   @id @default(cuid())
+  tenantSlug String   @unique
+  enabled    Boolean  @default(false)
+  /// Destination des backups, au niveau CLIENT (un VPS pour tous ses projets).
+  /// Le chemin effectif d'un projet est dérivé : backupPath/<slug projet>.
+  backupServerId String?
+  backupServer   Server? @relation("BackupDest", fields: [backupServerId], references: [id])
+  backupPath     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/// Config de backup automatisé d'un projet (cf. docs/steps-docs/backups-auto.md).
+/// Physalis ne détient QUE la clé GPG publique (postée par l'agent) ; ni le mot
+/// de passe DB ni la clé privée ne vivent ici. La destination est un Server.
+model ProjectBackupConfig {
+  id               String   @id @default(cuid())
+  projectId        String   @unique
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  enabled          Boolean  @default(false)
+  /// Un seul environnement backupé par projet (prod par défaut).
+  environmentName  String
+
+  // DB(s) source : multi-DB → modèle enfant ProjectBackupDatabase.
+  // La destination vit au niveau CLIENT (ClientBackupConfig).
+
+  // GPG : Physalis ne tient que le public (posté par l'agent à l'enregistrement)
+  gpgPublicKey      String?
+  gpgKeyId          String?
+  agentRegisteredAt DateTime?
+  /// Hash SHA-256 du token d'agent — vérifie register/plan/report (timingSafeEqual,
+  /// sans déchiffrer à chaque poll).
+  agentTokenHash    String?
+  /// Copie chiffrée (AES-256-GCM) du MÊME token, pour l'injection zéro-touch dans le
+  /// bundle de déploiement (Physalis déchiffre et pose BACKUP_TOKEN). Même posture que
+  /// la clé SSH du serveur, déjà dans le bundle. Null tant qu'aucun token n'a été émis.
+  agentTokenEnc     String?
+  agentTokenIv      String?
+  agentTokenTag     String?
+  /// Anti-spam du watchdog : dernière alerte « backup en retard » envoyée.
+  overdueAlertedAt  DateTime?
+
+  // Rétention (appliquée côté agent)
+  retentionDaily   Int      @default(7)
+  retentionWeekly  Int      @default(4)
+  retentionMonthly Int      @default(3)
+
+  // Planification (servie à l'agent ; le cron Physalis = watchdog)
+  scheduleHour     Int      @default(3)
+  intervalDays     Int      @default(1)
+  backupNextAt     DateTime?
+  backupLastAt     DateTime?
+  backupLastStatus String?
+  backupErrorCount Int      @default(0)
+  forceRequestedAt DateTime?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  databases        ProjectBackupDatabase[]
+  entries          ProjectBackupEntry[]
+}
+
+/// Une DB d'un projet à sauvegarder (un projet peut en avoir plusieurs).
+/// Détectée depuis le docker-compose + .env, éditable par l'utilisateur.
+/// Physalis ne stocke PAS le mot de passe : seulement la clé du secret (.env)
+/// qui le contient, pour l'injecter au déploiement.
+model ProjectBackupDatabase {
+  id                String              @id @default(cuid())
+  configId          String
+  config            ProjectBackupConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  dbType            BackupDbType
+  dbName            String
+  /// Hostname sur le réseau docker du projet (= nom du service db).
+  dbHost            String
+  dbUser            String
+  /// Clé du secret (.env) contenant le mot de passe (null si en clair / non résolu).
+  passwordSecretKey String?
+  port              Int?
+  enabled           Boolean  @default(true)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([configId])
+}
+
+/// Une archive de backup (remplie par les rapports de l'agent — tranche suivante).
+model ProjectBackupEntry {
+  id              String              @id @default(cuid())
+  projectId       String
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  configId        String
+  config          ProjectBackupConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  filename        String
+  sizeBytes       BigInt?
+  dbType          BackupDbType
+  dbName          String
+  environmentName String
+  destLocation    String
+
+  status          BackupEntryStatus
+  errorMessage    String?
+  restorable      Boolean  @default(true)
+  restoreJobId    String?
+  createdAt       DateTime @default(now())
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([projectId, status])
+  @@index([configId])
+}
+
+enum BackupDbType {
+  POSTGRESQL
+  MYSQL
+  MARIADB
+}
+
+enum BackupEntryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+/// Configuration email Pink-Floyd au niveau projet : un domaine + une clé API
+/// par projet, partagés par tous ses environnements (injectés dans le .env au
+/// déploiement). La clé API est chiffrée au repos (même schéma AES-256-GCM que
+/// Secret/Service). Les enregistrements DNS sont mémorisés en JSON.
+model ProjectEmailConfig {
+  id           String   @id @default(cuid())
+  projectId    String   @unique
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  domain       String
+  domainId     String
+  keyId        String
+  encryptedKey String
+  iv           String
+  tag          String
+  verified     Boolean  @default(false)
+  dnsRecords   Json     @default("[]")
+  /// Rotation automatique de la clé API (blue/green). À la rotation, on crée
+  /// une nouvelle clé + redeploy, et on diffère la révocation de l'ancienne au
+  /// cycle suivant (fenêtre de grâce — l'app lit la clé depuis son .env, mis à
+  /// jour seulement au redeploy). `pendingRevokeKeyId` = ancienne clé à révoquer.
+  rotationEnabled     Boolean   @default(false)
+  rotationIntervalDays Int?
+  rotationNextAt      DateTime?
+  rotationLastAt      DateTime?
+  rotationLastStatus  String?
+  rotationErrorCount  Int       @default(0)
+  pendingRevokeKeyId  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([rotationNextAt])
 }
 
 model Server {
@@ -96,6 +295,7 @@ model Server {
   organizationId String
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   environments   Environment[]
+  backupDests    ClientBackupConfig[] @relation("BackupDest")
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -118,10 +318,32 @@ model OrgSecret {
   organizationId String
   organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   versions       OrgSecretVersion[]
+  /// Rappel manuel de renouvellement (ex. expiration d'un PAT). Saisi à la création
+  /// via une durée ; Physalis ne connaît pas l'expiration réelle d'un token GitHub.
+  expiresAt      DateTime?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
   @@unique([organizationId, key])
+}
+
+/// Historique des valeurs d'un OrgSecret (Phase 10 — versioning).
+/// Cf. SecretVersion pour la spec complète. Mêmes contraintes :
+/// rétention 50 versions, UNIQUE(orgSecretId, version) pour les races.
+model OrgSecretVersion {
+  id             String    @id @default(cuid())
+  orgSecretId    String
+  orgSecret      OrgSecret @relation(fields: [orgSecretId], references: [id], onDelete: Cascade)
+  encryptedValue String
+  iv             String
+  tag            String
+  version        Int
+  createdById    String?
+  createdBy      User?     @relation("orgSecretVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+
+  @@unique([orgSecretId, version])
+  @@index([orgSecretId, version(sort: Desc)])
 }
 
 model OrgMember {
@@ -172,12 +394,41 @@ model Project {
   policies             Policy[]
   teamVaultCollections TeamVaultCollection[]
   secretRequests       SecretRequest[]
+  apis                 Api[]
+  emailConfig          ProjectEmailConfig?
+  backupConfig         ProjectBackupConfig?
+  backupEntries        ProjectBackupEntry[]
+  docs                 ProjectDoc[]
   githubRepo           String?
   githubWorkflow       String?
+  /// Dernier fetch des docs depuis le repo (null = jamais tenté). Distingue
+  /// « aucun fichier de doc » de « jamais récupéré ».
+  docsFetchedAt        DateTime?
   rotationPaused       Boolean               @default(false)
   createdAt            DateTime              @default(now())
 
   @@index([organizationId])
+}
+
+/// Doc projet récupérée depuis le repo GitHub (readme / technique / sécurité) et
+/// mise en cache. Une ligne n'existe QUE si le fichier existait au dernier fetch
+/// → l'absence de ligne = fichier absent. Cf. physalis.md.
+model ProjectDoc {
+  id        String         @id @default(cuid())
+  projectId String
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind      ProjectDocKind
+  content   String         // markdown brut
+  fetchedAt DateTime       @default(now())
+
+  @@unique([projectId, kind])
+  @@index([projectId])
+}
+
+enum ProjectDocKind {
+  README
+  TECHNICAL
+  SECURITY
 }
 
 model Policy {
@@ -205,7 +456,8 @@ model Service {
   encryptedData String
   iv            String
   tag           String
-  /// Tags techniques pour filtrage par les intégrations (N8n, Make).
+  /// Tags techniques pour le filtrage dans les intégrations (N8n/Make).
+  /// Distinct de `Secret.category` (organisation visuelle UI). Ex: ["stripe", "production"].
   tags          String[] @default([])
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -221,7 +473,7 @@ model AppAccount {
   encryptedData String
   iv            String
   tag           String
-  /// Tags techniques pour filtrage par les intégrations (N8n, Make).
+  /// Tags techniques pour le filtrage dans les intégrations (N8n/Make).
   tags          String[] @default([])
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -244,6 +496,8 @@ model Environment {
   secrets       Secret[]
   tokens        MachineToken[]
   policies      Policy[]
+  liveApis      Api[]          @relation("apiLiveEnv")
+  testApis      Api[]          @relation("apiTestEnv")
 
   @@unique([projectId, name])
   @@index([serverId])
@@ -256,7 +510,8 @@ model Secret {
   iv                    String
   tag                   String
   category              String?
-  /// Tags techniques pour filtrage par les intégrations (N8n, Make).
+  /// Tags techniques pour le filtrage dans les intégrations (N8n/Make).
+  /// Distinct de `category` (organisation visuelle UI). Ex: ["postgres", "production"].
   tags                  String[]          @default([])
   environmentId         String
   environment           Environment       @relation(fields: [environmentId], references: [id], onDelete: Cascade)
@@ -266,15 +521,18 @@ model Secret {
   rotationIntervalDays  Int?
   rotationLastAt        DateTime?
   rotationNextAt        DateTime?
-  rotationLastStatus    String?
+  rotationLastStatus    String?           // "success" | "error" | null
   rotationErrorCount    Int               @default(0)
   dbHost                String?
   dbPort                Int?
   dbName                String?
   dbType                DatabaseType?
   dbUser                String?
+  rotationNeedsFullDeploy Boolean          @default(false)
   rotationWebhookUrl    String?
   jwtRedeployWebhookUrl String?
+  apiKeyId              String?
+  apiKey                ApiKey?           @relation("secretApiKey", fields: [apiKeyId], references: [id], onDelete: SetNull)
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
@@ -287,11 +545,14 @@ enum RotationStrategy {
   JWT_SECRET
   WEBHOOK
   REMINDER
+  API_KEY
 }
 
 /// Historique des valeurs d'un Secret (Phase 10 — versioning).
-/// Rétention 50 max par secret, UNIQUE(secretId, version) pour gérer les
-/// race conditions sur MAX(version)+1 (retry côté code).
+/// Chaque row = un snapshot de l'ancienne valeur juste avant un update.
+/// Rétention : 50 versions max par secret (cleanup au INSERT côté code).
+/// UNIQUE(secretId, version) pour gérer les race conditions sur
+/// MAX(version)+1 — retry côté code en cas de conflit.
 model SecretVersion {
   id             String   @id @default(cuid())
   secretId       String
@@ -306,23 +567,6 @@ model SecretVersion {
 
   @@unique([secretId, version])
   @@index([secretId, version(sort: Desc)])
-}
-
-/// Historique des valeurs d'un OrgSecret (Phase 10 — versioning).
-model OrgSecretVersion {
-  id             String    @id @default(cuid())
-  orgSecretId    String
-  orgSecret      OrgSecret @relation(fields: [orgSecretId], references: [id], onDelete: Cascade)
-  encryptedValue String
-  iv             String
-  tag            String
-  version        Int
-  createdById    String?
-  createdBy      User?     @relation("orgSecretVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt      DateTime  @default(now())
-
-  @@unique([orgSecretId, version])
-  @@index([orgSecretId, version(sort: Desc)])
 }
 
 model MachineToken {
@@ -340,17 +584,27 @@ model MachineToken {
   revokedAt     DateTime?
 }
 
-/// UserToken (Phase 11a) — token Bearer scopé à un User. Donne accès READ
-/// aux projets dont l'user est ProjectMember. Préfixe brut `sv_user_<32 hex>`.
+/// UserToken (Phase 11a) — token Bearer scopé à un User (vs MachineToken
+/// scopé project+env). Donne accès READ aux projets dont l'user est
+/// ProjectMember, à son rôle effectif (VIEWER+). Cas d'usage : workflow
+/// N8n / Make / scripts qui touchent plusieurs projets sous le même
+/// compte. Préfixe brut `sv_user_<32 hex>` distinguable de `sv_<hex>`.
 model UserToken {
   id         String    @id @default(cuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Libellé libre choisi par l'user, ex: "N8n Voyages workflows".
   name       String
+  /// SHA-256 du token brut. UNIQUE pour le lookup au runtime.
   tokenHash  String    @unique
+  /// 12 premiers chars du token (`sv_user_xxxx`) — affichage UI sans
+  /// exposer le secret après la création.
   prefix     String
+  /// Optionnel — null = jamais.
   expiresAt  DateTime?
   lastUsedAt DateTime?
+  /// Révocation soft (revokedAt = now()) — évite le hard DELETE pour
+  /// préserver les liens `INTEGRATION_*_FETCH` dans les AccessLog.
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
 
@@ -359,8 +613,26 @@ model UserToken {
 }
 
 /// OrgToken (Phase 11c) — token Bearer scopé à une Organization. Survit
-/// au départ du créateur (createdById SetNull). Workflows N8n / Make
-/// pérennes. Préfixe brut `sv_org_<32 hex>`.
+/// au départ du user créateur (createdById SetNull, pas Cascade) — c'est
+/// le différenciateur principal vs UserToken. Cas d'usage : workflows
+/// N8n / Make institutionnels pérennes.
+///
+/// Permissions explicites :
+///   - allowedScopes : enum OrgTokenScope (READ uniquement en V1)
+///   - allowedProjectIds : tableau d'IDs de projets autorisés
+///   - allProjects : boolean — true ouvre l'accès à tous les projets
+///                   actuels et FUTURS de l'org
+///
+/// Sémantique :
+///   - allProjects=false ET allowedProjectIds=[]   → AUCUN accès (état
+///     invalide, à éviter via UI qui force la sélection)
+///   - allProjects=false ET allowedProjectIds=[..] → seulement ces projets
+///   - allProjects=true                            → tous les projets
+///                                                   (allowedProjectIds ignoré)
+///
+/// Préfixe brut : `sv_org_<32 hex>`. OrgSecrets (lus via le panel
+/// `/orgs/[slug]/secrets`) ne sont JAMAIS accessibles via OrgToken par
+/// design — pas de scope dédié.
 model OrgToken {
   id                String          @id @default(cuid())
   organizationId    String
@@ -368,13 +640,17 @@ model OrgToken {
   name              String
   description       String?
   tokenHash         String          @unique
+  /// 12 premiers chars du token (`sv_org_xxxx`) pour affichage UI.
   prefix            String
+  /// true → accès à tous les projets actuels ET FUTURS de l'org.
+  /// Marker explicite (vs tableau vide ambigu) — vide = aucun accès.
   allProjects       Boolean         @default(false)
   allowedProjectIds String[]        @default([])
   allowedScopes     OrgTokenScope[] @default([])
   expiresAt         DateTime?
   lastUsedAt        DateTime?
   revokedAt         DateTime?
+  /// SetNull au DELETE user → le token survit (différenciateur vs UserToken).
   createdById       String?
   createdBy         User?           @relation("orgTokenCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt         DateTime        @default(now())
@@ -411,6 +687,7 @@ enum Role {
 enum OrgRole {
   OWNER
   ADMIN
+  ADMIN_DEV
   DEV
   MEMBER
 }
@@ -426,6 +703,7 @@ model VaultEntry {
   userId              String
   user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Collection perso optionnelle (V2.0). NULL = "Sans catégorie".
+  /// SetNull on delete : supprimer une collection ne supprime pas ses entrées.
   collectionId        String?
   collection          VaultCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
   name                String
@@ -437,6 +715,9 @@ model VaultEntry {
   encryptedTotpSecret String?
   totpSecretIv        String?
   totpSecretTag       String?
+  /// Score de force du mot de passe (0-4, heuristique à la zxcvbn), calculé
+  /// côté serveur au save. NULL = pas de mot de passe.
+  passwordStrength    Int?
   tags                String[]         @default([])
   favorite            Boolean          @default(false)
   createdAt           DateTime         @default(now())
@@ -448,7 +729,8 @@ model VaultEntry {
 
 /// Collection perso d'un User (V2.0 — coffre personnel).
 /// Mirror simplifié de TeamVaultCollection : pas de members, scope user
-/// strict (un user n'accède qu'à SES collections).
+/// strict (un user n'accède qu'à SES collections). Déclenchant `slug`
+/// unique par user pour permettre des URLs propres + import idempotent.
 model VaultCollection {
   id        String       @id @default(cuid())
   userId    String
@@ -636,6 +918,8 @@ enum AccessAction {
   VAULT_ENTRY_MOVE
   VAULT_COLLECTION_CREATE
   VAULT_COLLECTION_DELETE
+  VAULT_PERSONAL_COLLECTION_CREATE
+  VAULT_PERSONAL_COLLECTION_DELETE
   VAULT_MEMBER_ADD
   VAULT_MEMBER_REMOVE
   VAULT_MEMBER_ROLE_CHANGE
@@ -650,15 +934,10 @@ enum AccessAction {
   SECRET_REQUEST_IMPORTED
   SECRET_REQUEST_REVOKED
   SECRET_REQUEST_EXPIRED
-  // Versioning des secrets (Phase 10)
   SECRET_VERSION_REVEAL
   SECRET_ROLLBACK
   ORG_SECRET_VERSION_REVEAL
   ORG_SECRET_ROLLBACK
-  // Coffre personnel V2 — collections
-  VAULT_PERSONAL_COLLECTION_CREATE
-  VAULT_PERSONAL_COLLECTION_DELETE
-  // Phase 11 — Tokens d'intégration et endpoints integrations
   USER_TOKEN_CREATE
   USER_TOKEN_REVOKE
   INTEGRATION_CREDENTIALS_FETCH
@@ -676,6 +955,19 @@ enum AccessAction {
   DATABASE_UPDATE
   DATABASE_DELETE
   DATABASE_CONNECTION_TEST
+  API_CREATED
+  API_UPDATED
+  API_DELETED
+  API_KEY_CREATED
+  API_KEY_UPDATED
+  API_KEY_REVOKED
+  BACKUP_ENABLED
+  BACKUP_DISABLED
+  BACKUP_CONFIG_UPDATED
+  BACKUP_SUCCESS
+  BACKUP_FAILED
+  BACKUP_FORCED
+  BACKUP_KEY_REVEAL
 }
 
 /// Demande de secret externe (Phase 9). Un user DEV+ crée la demande,
@@ -715,6 +1007,9 @@ model SecretRequest {
   /// Clé publique ECDH P-256 sérialisée JWK. Stockée à la création,
   /// jamais sensible (publique par essence).
   publicKeyJwk       String
+  /// Clé publique ML-KEM-768 (base64), volet post-quantique de l'échange
+  /// hybride. NULL pour les demandes legacy (ECDH seul). Publique par essence.
+  mlkemPublicKey     String?
   /// Ciphertext base64 (AES-GCM). Vide tant que non soumis. Effacé après import/revoke.
   encryptedSecret    String?
   /// IV AES-GCM base64. Idem.
@@ -722,6 +1017,11 @@ model SecretRequest {
   /// Clé publique éphémère du client (JWK). Idem — le serveur en a besoin
   /// pour donner à l'admin de quoi dériver la clé symétrique au moment du reveal.
   ephemeralPublicKey String?
+  /// Ciphertext ML-KEM-768 (base64) produit par le tiers à la soumission.
+  /// NULL pour les demandes legacy (ECDH seul).
+  mlkemCiphertext    String?
+  /// Version du format hybride : 1 = ECDH+ML-KEM, NULL = legacy ECDH seul.
+  hybridVersion      Int?
   submittedAt        DateTime?
   /// IP du soumetteur (audit, abuse-tracking).
   submitterIp        String?
@@ -737,14 +1037,94 @@ model SecretRequest {
   @@index([expiresAt])
 }
 
-model TokenIndex {
-  tokenHash  String    @id @map("token_hash")
-  tenantSlug String    @map("tenant_slug") @db.VarChar(100)
-  kind       TokenKind
-  createdAt  DateTime  @default(now()) @map("created_at")
+// ─── API Gateway ─────────────────────────────────────────────────────
 
-  @@index([tenantSlug, kind])
+enum ApiValidationMode {
+  REMOTE
+  JWT
 }
+
+model Api {
+  id                     String            @id @default(cuid())
+  projectId              String
+  project                Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name                   String
+  description            String?
+  url                    String?
+  mode                   ApiValidationMode @default(REMOTE)
+  jwtSecret              String?
+  jwtSecretIv            String?
+  jwtSecretTag           String?
+  defaultRateLimit       Int?
+  defaultRateLimitWindow String            @default("1m")
+  defaultExpiresIn       Int?
+  liveEnvId              String?
+  liveEnv                Environment?      @relation("apiLiveEnv", fields: [liveEnvId], references: [id], onDelete: SetNull)
+  testEnvId              String?
+  testEnv                Environment?      @relation("apiTestEnv", fields: [testEnvId], references: [id], onDelete: SetNull)
+  keys                   ApiKey[]
+  logs                   ApiLog[]
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model ApiKey {
+  id              String    @id @default(cuid())
+  apiId           String
+  api             Api       @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  keyHash         String    @unique
+  keyPrefix       String
+  name            String
+  description     String?
+  scopes          String[]
+  rateLimit       Int?
+  rateLimitWindow String?
+  expiresAt       DateTime?
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  createdById     String?
+  createdBy       User?     @relation("apiKeyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  meta            Json?
+  createdAt       DateTime  @default(now())
+  secrets         Secret[]  @relation("secretApiKey")
+
+  @@index([apiId])
+}
+
+model ApiLog {
+  id          String   @id @default(cuid())
+  apiId       String
+  api         Api      @relation(fields: [apiId], references: [id], onDelete: Cascade)
+  keyId       String?
+  keyPrefix   String?
+  method      String
+  path        String?
+  ipAddress   String?
+  userAgent   String?
+  valid       Boolean
+  reason      String?
+  statusCode  Int?
+  latencyMs   Int?
+  createdAt   DateTime @default(now())
+
+  @@index([apiId, createdAt(sort: Desc)])
+  @@index([keyId, createdAt(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Modèles admin fusionnés en mono-DB pour le self-host.
+//
+// Dans secretvault (multi-tenant) ces modèles vivent dans le schéma `admin`
+// (prisma/schema.prisma, denylisté). En self-host, base unique → on les
+// append au schéma principal après le rename tenant-schema → schema.prisma.
+// Append réalisé par build-public.mjs (cf. SCHEMA_APPEND_FILE).
+//
+// NB : `model Policy` n'est PAS ici — le tenant-schema le contient déjà
+// (avec ses back-relations Project/Environment).
+// ─────────────────────────────────────────────────────────────────────────
 
 enum TokenKind {
   MACHINE
@@ -753,6 +1133,15 @@ enum TokenKind {
   SECRET_REQUEST
   USER
   ORG
+}
+
+model TokenIndex {
+  tokenHash  String    @id @map("token_hash")
+  tenantSlug String    @map("tenant_slug") @db.VarChar(100)
+  kind       TokenKind
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantSlug, kind])
 }
 
 model PasswordResetToken {
@@ -767,20 +1156,4 @@ model PasswordResetToken {
 
   @@index([email])
   @@index([expiresAt])
-}
-
-model OidcPolicy {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  repo          String
-  workflow      String
-  branch        String
-  tenantSlug    String   @map("tenant_slug") @db.VarChar(100)
-  projectId     String   @map("project_id")
-  environmentId String   @map("environment_id")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
-
-  @@unique([repo, workflow, branch, tenantSlug, projectId, environmentId])
-  @@index([repo, workflow, branch])
-  @@index([tenantSlug, projectId])
 }

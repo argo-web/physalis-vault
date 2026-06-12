@@ -18,6 +18,7 @@ type RequestData = {
   description: string | null;
   requestedByEmail: string;
   publicKeyJwk: string;
+  mlkemPublicKey: string | null;
   expiresAt: Date;
 };
 
@@ -28,7 +29,7 @@ async function loadRequest(token: string): Promise<RequestData | null> {
 
   const tokenHash = hashSecretRequestToken(token);
   const rows = await basePrisma.$queryRawUnsafe<RequestData[]>(
-    `SELECT label, description, "requestedByEmail", "publicKeyJwk", "expiresAt"
+    `SELECT label, description, "requestedByEmail", "publicKeyJwk", "mlkemPublicKey", "expiresAt"
      FROM "client_${tenantSlug}"."SecretRequest"
      WHERE "tokenHash" = $1
        AND "revokedAt" IS NULL
@@ -101,6 +102,7 @@ export default async function RequestPage({
           description={data.description}
           requestedByEmail={data.requestedByEmail}
           publicKeyJwk={data.publicKeyJwk}
+          mlkemPublicKey={data.mlkemPublicKey}
           expiresAt={data.expiresAt.toISOString()}
         />
       </div>

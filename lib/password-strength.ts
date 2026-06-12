@@ -54,6 +54,13 @@ const LABELS: Record<StrengthLevel, { label: string; color: string }> = {
   4: { label: "très fort",   color: "#16a34a" },   // vert
 };
 
+// Mappe un score déjà calculé (0-4, ex. stocké en DB) vers son label/couleur,
+// sans avoir besoin du mot de passe en clair. Clampe les valeurs hors borne.
+export function strengthMeta(score: number): { label: string; color: string } {
+  const s = Math.max(0, Math.min(4, Math.round(score))) as StrengthLevel;
+  return LABELS[s];
+}
+
 export function estimateStrength(pwd: string): Strength {
   if (!pwd) {
     return { score: 0, label: LABELS[0].label, color: LABELS[0].color, hint: null };

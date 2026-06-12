@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, usePathname } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import {
   RiBookOpenLine,
   RiFolderOpenLine,
   RiMenuLine,
   RiCloseLine,
   RiSafe2Line,
+  RiSettings3Line,
   RiShareForward2Line,
   type RemixiconComponentType,
 } from "@remixicon/react";
@@ -16,6 +17,7 @@ import {
 type NavItem = { href: string; label: string; Icon?: RemixiconComponentType };
 
 export default function HeaderNav() {
+  const t = useTranslations("dashboard.nav");
   const pathname = usePathname() ?? "";
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -45,10 +47,11 @@ export default function HeaderNav() {
   }, [open]);
 
   const items: NavItem[] = [
-    { href: "/projects", label: "Projets", Icon: RiFolderOpenLine },
-    { href: "/vault", label: "Coffre personnel", Icon: RiSafe2Line },
-    { href: "/shares", label: "Partages", Icon: RiShareForward2Line },
-    { href: "/docs", label: "Documentation", Icon: RiBookOpenLine },
+    { href: "/projects", label: t("projects"), Icon: RiFolderOpenLine },
+    { href: "/vault", label: t("vault"), Icon: RiSafe2Line },
+    { href: "/shares", label: t("shares"), Icon: RiShareForward2Line },
+    { href: "/docs", label: t("docs"), Icon: RiBookOpenLine },
+    { href: "/settings/parameters", label: t("parameters"), Icon: RiSettings3Line },
   ];
 
   function isActive(href: string): boolean {
@@ -56,6 +59,7 @@ export default function HeaderNav() {
     if (href === "/vault") return pathname === "/vault";
     if (href === "/shares") return pathname === "/shares";
     if (href === "/docs") return pathname.startsWith("/docs");
+    if (href === "/settings/parameters") return pathname.startsWith("/settings");
     return pathname === href;
   }
 
@@ -66,7 +70,7 @@ export default function HeaderNav() {
         className="app-nav-toggle"
         aria-expanded={open}
         aria-controls="app-nav-menu"
-        aria-label={open ? "Fermer le menu" : "Ouvrir le menu"}
+        aria-label={open ? t("closeMenu") : t("openMenu")}
         onClick={() => setOpen((v) => !v)}
       >
         {open ? <RiCloseLine size={20} aria-hidden /> : <RiMenuLine size={20} aria-hidden />}
@@ -74,7 +78,7 @@ export default function HeaderNav() {
       <nav
         id="app-nav-menu"
         className={`app-nav${open ? " is-open" : ""}`}
-        aria-label="Navigation principale"
+        aria-label={t("ariaLabel")}
       >
         {items.map(({ href, label, Icon }) => (
           <Link

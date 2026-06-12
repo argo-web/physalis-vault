@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
-import Link from "next/link";
+import { Link, useRouter } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import RateLimitAlert from "@/components/RateLimitAlert";
 
 export default function RegisterForm() {
+  const t = useTranslations("auth.register");
+  const tCommon = useTranslations("auth.common");
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,7 +34,7 @@ export default function RegisterForm() {
         const data = (await res.json().catch(() => null)) as {
           error?: string;
         } | null;
-        setError(data?.error ?? "Inscription impossible.");
+        setError(data?.error ?? t("errorFallback"));
         return;
       }
       let signed: Awaited<ReturnType<typeof signIn>> | null = null;
@@ -43,7 +45,6 @@ export default function RegisterForm() {
           redirect: false,
         });
       } catch {
-        // Compte cree mais auto-signIn rate-limite : on redirige vers /login.
         router.push("/login");
         return;
       }
@@ -59,7 +60,7 @@ export default function RegisterForm() {
   return (
     <form onSubmit={onSubmit} className="login-form">
       <div className="field">
-        <label>Email</label>
+        <label>{tCommon("emailLabel")}</label>
         <input
           type="email"
           required
@@ -71,7 +72,7 @@ export default function RegisterForm() {
       </div>
 
       <div className="field">
-        <label>Mot de passe (12 caractères minimum)</label>
+        <label>{t("passwordLabel")}</label>
         <input
           type="password"
           required
@@ -92,13 +93,13 @@ export default function RegisterForm() {
         className="btn btn-primary"
         style={{ marginTop: 6, padding: "11px 16px", justifyContent: "center" }}
       >
-        {pending ? "Création..." : "Créer le compte"}
+        {pending ? t("pendingButton") : t("submitButton")}
       </button>
 
       <p className="text-xs text-muted" style={{ textAlign: "center" }}>
-        Déjà un compte ?{" "}
+        {t("alreadyHaveAccount")}{" "}
         <Link href="/login" className="text-accent">
-          Se connecter
+          {tCommon("signIn")}
         </Link>
       </p>
     </form>

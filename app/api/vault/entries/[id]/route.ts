@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decrypt, encrypt } from "@/lib/crypto";
+import { estimateStrength } from "@/lib/password-strength";
 import { readJson, requireUser } from "@/lib/api";
 import { logAction } from "@/lib/audit";
 import { parseTotpInput } from "@/lib/otpauth-parse";
@@ -130,6 +131,7 @@ export async function PATCH(req: Request, { params }: Params) {
     encryptedPassword?: string | null;
     passwordIv?: string | null;
     passwordTag?: string | null;
+    passwordStrength?: number | null;
     encryptedTotpSecret?: string | null;
     totpSecretIv?: string | null;
     totpSecretTag?: string | null;
@@ -171,6 +173,7 @@ export async function PATCH(req: Request, { params }: Params) {
       data.encryptedPassword = null;
       data.passwordIv = null;
       data.passwordTag = null;
+      data.passwordStrength = null;
     } else if (typeof body.password === "string") {
       if (body.password.length > PASSWORD_MAX) {
         return NextResponse.json(
@@ -182,6 +185,8 @@ export async function PATCH(req: Request, { params }: Params) {
       data.encryptedPassword = payload.encryptedValue;
       data.passwordIv = payload.iv;
       data.passwordTag = payload.tag;
+      // Recalculé sur le clair (jamais depuis le chiffré).
+      data.passwordStrength = estimateStrength(body.password).score;
     }
     changed.push("password");
   }
@@ -262,6 +267,7 @@ export async function PATCH(req: Request, { params }: Params) {
       username: true,
       tags: true,
       favorite: true,
+      passwordStrength: true,
       collectionId: true,
       createdAt: true,
       updatedAt: true,

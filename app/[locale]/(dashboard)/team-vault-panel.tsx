@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import {
   RiDownload2Line,
   RiFolderOpenLine,
@@ -68,6 +69,7 @@ export default function TeamVaultPanel({
   scope: TeamVaultScope;
   canCreate: boolean;
 }) {
+  const t = useTranslations("vault.teamVault");
   const [collections, setCollections] = useState<Collection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
@@ -77,12 +79,12 @@ export default function TeamVaultPanel({
     setError(null);
     const res = await fetch(basePath(scope));
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("deleteError"));
       return;
     }
     const data = (await res.json()) as { collections: Collection[] };
     setCollections(data.collections);
-  }, [scope]);
+  }, [scope, t]);
 
   useEffect(() => {
     reload();
@@ -98,7 +100,7 @@ export default function TeamVaultPanel({
       const data = (await res.json().catch(() => null)) as
         | { error?: string }
         | null;
-      setError(data?.error ?? "Création impossible.");
+      setError(data?.error ?? t("deleteError"));
       return false;
     }
     setCreating(false);
@@ -107,13 +109,13 @@ export default function TeamVaultPanel({
   }
 
   async function removeCollection(c: Collection) {
-    if (!confirm(`Supprimer la collection "${c.name}" et toutes ses entrées ?`))
+    if (!confirm(t("deleteConfirm", { name: c.name })))
       return;
     const res = await fetch(`${basePath(scope)}/${c.slug}`, {
       method: "DELETE",
     });
     if (!res.ok) {
-      setError("Suppression impossible.");
+      setError(t("deleteError"));
       return;
     }
     if (activeSlug === c.slug) setActiveSlug(null);
@@ -125,8 +127,8 @@ export default function TeamVaultPanel({
       <div className="section-header">
         <p className="help" style={{ marginRight: 12 }}>
           {scope.kind === "org"
-            ? "Coffres partagés au niveau de l'organisation. Membres gérés par collection (OWNER/EDITOR/VIEWER). OrgADMIN+ ont accès OWNER implicite, OrgDEV a accès EDITOR implicite sur toutes les collections."
-            : "Coffres partagés au niveau du projet. Droits hérités du RBAC projet (VIEWER/EDITOR/OWNER projet → même rôle sur les collections)."}
+            ? t("scopeOrg")
+            : t("scopeProject")}
         </p>
         {canCreate && (
           <button
@@ -134,7 +136,7 @@ export default function TeamVaultPanel({
             onClick={() => setCreating(true)}
             className="btn btn-primary btn-sm"
           >
-            + Nouvelle collection
+            {t("newCollectionBtn")}
           </button>
         )}
       </div>
@@ -151,14 +153,14 @@ export default function TeamVaultPanel({
       {error && <p className="error-text">{error}</p>}
 
       {collections === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : collections.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-title">Aucune collection</div>
+          <div className="empty-state-title">{t("noCollections")}</div>
           <div>
             {canCreate
-              ? "Cliquez sur « + Nouvelle collection » pour créer."
-              : "Aucune collection accessible pour le moment."}
+              ? t("noCollectionsCreate")
+              : t("noCollectionsAccess")}
           </div>
         </div>
       ) : (
@@ -194,12 +196,11 @@ export default function TeamVaultPanel({
                   <div className="row-name">{c.name}</div>
                   <div className="row-meta">
                     <span>
-                      {c.entryCount} entrée{c.entryCount === 1 ? "" : "s"}
+                      {t("entriesCount", { count: c.entryCount })}
                     </span>
                     {c.memberCount !== undefined && (
                       <span>
-                        · {c.memberCount} membre
-                        {c.memberCount === 1 ? "" : "s"}
+                        · {t("membersCount", { count: c.memberCount })}
                       </span>
                     )}
                   </div>
@@ -237,6 +238,7 @@ function CreateCollectionForm({
   onCancel: () => void;
   onCreated: (name: string) => Promise<boolean>;
 }) {
+  const t = useTranslations("vault.teamVault");
   const [name, setName] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -265,14 +267,14 @@ function CreateCollectionForm({
         disabled={pending || !name.trim()}
         className="btn btn-primary btn-sm"
       >
-        {pending ? "..." : "Créer"}
+        {pending ? "..." : t("newCollectionBtn")}
       </button>
       <button
         type="button"
         onClick={onCancel}
         className="btn btn-ghost btn-sm"
       >
-        Annuler
+        {t("cancelBtn")}
       </button>
     </form>
   );
@@ -293,6 +295,8 @@ function CollectionDetail({
   onDeleted: () => void;
   onChanged: () => void;
 }) {
+  const t = useTranslations("vault.teamVault");
+  const tv = useTranslations("vault");
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [showMembers, setShowMembers] = useState(false);
@@ -312,12 +316,12 @@ function CollectionDetail({
     setError(null);
     const res = await fetch(entryBase);
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("deleteError"));
       return;
     }
     const data = (await res.json()) as { entries: Entry[] };
     setEntries(data.entries);
-  }, [entryBase]);
+  }, [entryBase, t]);
 
   useEffect(() => {
     reload();
@@ -333,7 +337,7 @@ function CollectionDetail({
       return;
     }
     const res = await fetch(`${entryBase}/${id}`);
-    if (!res.ok) return setError("Impossible de révéler.");
+    if (!res.ok) return setError(t("deleteError"));
     const data = (await res.json()) as { entry: { password: string | null } };
     setRevealed((r) => ({ ...r, [id]: data.entry.password ?? "" }));
   }
@@ -341,25 +345,25 @@ function CollectionDetail({
   async function copyToClipboard(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setError(`✓ ${label} copié`);
+      setError(tv("copySuccess", { label }));
       setTimeout(() => setError(null), 1500);
     } catch {
-      setError("Copie impossible.");
+      setError(t("deleteError"));
     }
   }
 
   async function copyPassword(id: string) {
     const res = await fetch(`${entryBase}/${id}`);
-    if (!res.ok) return setError("Impossible de récupérer.");
+    if (!res.ok) return setError(t("deleteError"));
     const data = (await res.json()) as { entry: { password: string | null } };
-    if (!data.entry.password) return setError("Aucun mot de passe.");
+    if (!data.entry.password) return setError(t("deleteError"));
     copyToClipboard(data.entry.password, "Mot de passe");
   }
 
   async function remove(e: Entry) {
-    if (!confirm(`Supprimer "${e.name}" ?`)) return;
+    if (!confirm(t("deleteConfirm", { name: e.name }))) return;
     const res = await fetch(`${entryBase}/${e.id}`, { method: "DELETE" });
-    if (!res.ok) return setError("Suppression impossible.");
+    if (!res.ok) return setError(t("deleteError"));
     setRevealed((r) => {
       const copy = { ...r };
       delete copy[e.id];
@@ -389,7 +393,7 @@ function CollectionDetail({
               onClick={() => setAdding(true)}
               className="btn btn-primary btn-sm"
             >
-              + Entrée
+              {t("addEntryBtn")}
             </button>
           )}
           {canEdit && (
@@ -397,9 +401,9 @@ function CollectionDetail({
               type="button"
               onClick={() => setImporting(true)}
               className="btn btn-ghost btn-sm"
-              title="Importer un fichier CSV (Bitwarden, Chrome, ou générique)"
+              title={t("importBtn")}
             >
-              <RiDownload2Line size={14} aria-hidden /> Importer CSV
+              <RiDownload2Line size={14} aria-hidden /> {t("importBtn")}
             </button>
           )}
           {canManage && scope.kind === "org" && (
@@ -408,7 +412,7 @@ function CollectionDetail({
               onClick={() => setShowMembers((v) => !v)}
               className="btn btn-ghost btn-sm"
             >
-              {showMembers ? "Masquer membres" : "Membres"}
+              {showMembers ? t("hideMembersBtn") : t("membersBtn")}
             </button>
           )}
         </div>
@@ -418,16 +422,16 @@ function CollectionDetail({
               type="button"
               onClick={renameCollection}
               className="btn btn-ghost btn-xs"
-              title="Renommer la collection"
+              title={t("renameBtn")}
             >
-              Renommer
+              {t("renameBtn")}
             </button>
             <button
               type="button"
               onClick={onDeleted}
               className="btn btn-danger btn-xs"
             >
-              Supprimer la collection
+              {t("deleteBtn")}
             </button>
           </div>
         )}
@@ -468,8 +472,8 @@ function CollectionDetail({
             setImporting(false);
             setError(
               count > 0
-                ? `✓ ${count} entrée${count === 1 ? "" : "s"} importée${count === 1 ? "" : "s"}`
-                : "Aucune entrée importée.",
+                ? tv("import.success", { count })
+                : tv("import.empty"),
             );
             setTimeout(() => setError(null), 3000);
             reload();
@@ -502,10 +506,10 @@ function CollectionDetail({
       )}
 
       {entries === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : entries.length === 0 ? (
         <p className="help" style={{ fontStyle: "italic" }}>
-          Aucune entrée dans cette collection.
+          {tv("form.emptyCategoryHint")}
         </p>
       ) : (
         <div className="row-list">
@@ -521,9 +525,8 @@ function CollectionDetail({
                       <span
                         className="chip"
                         style={{ marginLeft: 6, fontSize: 10 }}
-                        title="Code 2FA configuré"
                       >
-                        🔐 2FA
+                        {tv("form.twoFaBadge")}
                       </span>
                     )}
                   </div>
@@ -554,9 +557,9 @@ function CollectionDetail({
                     className="flex flex-wrap gap-1"
                     style={{ marginTop: 6 }}
                   >
-                    {e.tags.map((t) => (
-                      <span key={t} className="chip">
-                        {t}
+                    {e.tags.map((tag) => (
+                      <span key={tag} className="chip">
+                        {tag}
                       </span>
                     ))}
                   </div>
@@ -566,10 +569,10 @@ function CollectionDetail({
                 {e.username && (
                   <button
                     type="button"
-                    onClick={() => copyToClipboard(e.username!, "Login")}
+                    onClick={() => copyToClipboard(e.username!, tv("copyLoginBtn"))}
                     className="btn btn-ghost btn-xs"
                   >
-                    Login
+                    {tv("copyLoginBtn")}
                   </button>
                 )}
                 <button
@@ -577,14 +580,14 @@ function CollectionDetail({
                   onClick={() => copyPassword(e.id)}
                   className="btn btn-ghost btn-xs"
                 >
-                  Mdp
+                  {tv("copyPasswordBtn")}
                 </button>
                 <button
                   type="button"
                   onClick={() => reveal(e.id)}
                   className="btn btn-ghost btn-xs"
                 >
-                  {revealed[e.id] !== undefined ? "Masquer" : "Afficher"}
+                  {revealed[e.id] !== undefined ? tv("hideBtn") : tv("revealBtn")}
                 </button>
                 {canEdit && (
                   <>
@@ -593,14 +596,14 @@ function CollectionDetail({
                       onClick={() => setEditing(e)}
                       className="btn btn-ghost btn-xs"
                     >
-                      Modifier
+                      {tv("editBtn")}
                     </button>
                     <button
                       type="button"
                       onClick={() => remove(e)}
                       className="btn btn-danger btn-xs"
                     >
-                      Supprimer
+                      {tv("deleteBtn")}
                     </button>
                   </>
                 )}
@@ -620,6 +623,7 @@ function MembersSection({
   orgSlug: string;
   collectionSlug: string;
 }) {
+  const t = useTranslations("vault.teamVault");
   const [members, setMembers] = useState<Member[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -628,7 +632,7 @@ function MembersSection({
   const reload = useCallback(async () => {
     setError(null);
     const res = await fetch(base);
-    if (!res.ok) return setError("Erreur de chargement membres.");
+    if (!res.ok) return setError(t("deleteError"));
     const data = (await res.json()) as { members: Member[] };
     setMembers(data.members);
   }, [base]);
@@ -647,7 +651,7 @@ function MembersSection({
       const data = (await res.json().catch(() => null)) as
         | { error?: string }
         | null;
-      setError(data?.error ?? "Ajout impossible.");
+      setError(data?.error ?? t("deleteError"));
       return false;
     }
     setAdding(false);
@@ -661,14 +665,14 @@ function MembersSection({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ role }),
     });
-    if (!res.ok) return setError("Modification impossible.");
+    if (!res.ok) return setError(t("deleteError"));
     reload();
   }
 
   async function remove(m: Member) {
     if (!confirm(`Retirer ${m.email} de cette collection ?`)) return;
     const res = await fetch(`${base}/${m.userId}`, { method: "DELETE" });
-    if (!res.ok) return setError("Suppression impossible.");
+    if (!res.ok) return setError(t("deleteError"));
     reload();
   }
 
@@ -676,7 +680,7 @@ function MembersSection({
     <div className="card" style={{ padding: 14, marginBottom: 12 }}>
       <div className="section-header">
         <h4 className="cat-header" style={{ margin: 0 }}>
-          Membres
+          {t("membersBtn")}
         </h4>
         {!adding && (
           <button
@@ -697,10 +701,10 @@ function MembersSection({
         <AddMemberForm onCancel={() => setAdding(false)} onAdded={add} />
       )}
       {members === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : members.length === 0 ? (
         <p className="help" style={{ fontStyle: "italic" }}>
-          Aucun membre explicite. OrgADMIN+ ont accès OWNER implicite, OrgDEV a accès EDITOR implicite.
+          {t("emptyMembers")}
         </p>
       ) : (
         <div className="row-list">
@@ -748,6 +752,7 @@ function AddMemberForm({
   onCancel: () => void;
   onAdded: (email: string, role: VaultRole) => Promise<boolean>;
 }) {
+  const t = useTranslations("vault.teamVault");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<VaultRole>("VIEWER");
   const [pending, startTransition] = useTransition();
@@ -788,14 +793,14 @@ function AddMemberForm({
         disabled={pending}
         className="btn btn-primary btn-sm"
       >
-        Ajouter
+        {t("addMemberBtn")}
       </button>
       <button
         type="button"
         onClick={onCancel}
         className="btn btn-ghost btn-sm"
       >
-        Annuler
+        {t("cancelBtn")}
       </button>
     </form>
   );
@@ -834,6 +839,7 @@ function EntryDialog({
   // en mode edit + si au moins une autre collection est disponible.
   const [selectedCollectionId, setSelectedCollectionId] =
     useState(currentCollectionId);
+  const t = useTranslations("vault");
   const [pwdLoaded, setPwdLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -853,12 +859,12 @@ function EntryDialog({
   }
 
   function addTag() {
-    const t = tagInput.trim();
-    if (!t || tags.includes(t)) {
+    const tag = tagInput.trim();
+    if (!tag || tags.includes(tag)) {
       setTagInput("");
       return;
     }
-    setTags([...tags, t]);
+    setTags([...tags, tag]);
     setTagInput("");
   }
 
@@ -891,7 +897,7 @@ function EntryDialog({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Enregistrement impossible.");
+        setError(data?.error ?? t("saveError"));
         return;
       }
       onSaved();
@@ -903,13 +909,13 @@ function EntryDialog({
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">
-            {isEdit ? "Modifier l'entrée" : "Nouvelle entrée"}
+            {isEdit ? t("form.editTitle") : t("form.createTitle")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("form.closeLabel")}
           >
             ✕
           </button>
@@ -917,7 +923,7 @@ function EntryDialog({
         <form onSubmit={submit}>
           <div className="dialog-body">
             <div className="field">
-              <label>Nom *</label>
+              <label>{t("form.nameLabel")} *</label>
               <input
                 required
                 autoFocus
@@ -927,7 +933,7 @@ function EntryDialog({
               />
             </div>
             <div className="field">
-              <label>URL</label>
+              <label>{t("form.urlLabel")}</label>
               <input
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
@@ -935,7 +941,7 @@ function EntryDialog({
               />
             </div>
             <div className="field">
-              <label>Login / Email</label>
+              <label>{t("form.usernameLabel")}</label>
               <input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -951,7 +957,7 @@ function EntryDialog({
                   gap: 8,
                 }}
               >
-                <label style={{ margin: 0 }}>Mot de passe</label>
+                <label style={{ margin: 0 }}>{t("form.passwordLabel")}</label>
                 <div className="flex items-center gap-2">
                   {isEdit && !pwdLoaded && (
                     <button
@@ -959,7 +965,7 @@ function EntryDialog({
                       onClick={loadCurrentSecrets}
                       className="btn btn-ghost btn-xs"
                     >
-                      Charger l&apos;actuel
+                      {t("form.loadCurrentBtn")}
                     </button>
                   )}
                   <button
@@ -969,17 +975,17 @@ function EntryDialog({
                       setShowPassword(true);
                       setPwdLoaded(true);
                     }}
-                    title="Générer (24 chars base64url)"
+                    title={t("generator.refreshBtn")}
                     className="btn btn-ghost btn-xs"
                   >
-                    <RiShuffleLine size={12} aria-hidden /> Générer
+                    <RiShuffleLine size={12} aria-hidden /> {t("generator.refreshBtn")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     className="btn btn-ghost btn-xs"
                   >
-                    {showPassword ? "Masquer" : "Voir"}
+                    {showPassword ? t("hideBtn") : t("revealBtn")}
                   </button>
                 </div>
               </div>
@@ -991,7 +997,7 @@ function EntryDialog({
                   setPwdLoaded(true);
                 }}
                 placeholder={
-                  isEdit && !pwdLoaded ? "(inchangé)" : "••••••••••••"
+                  isEdit && !pwdLoaded ? t("form.unchanged") : "••••••••••••"
                 }
                 className="input input-mono"
               />
@@ -1005,7 +1011,7 @@ function EntryDialog({
                   gap: 8,
                 }}
               >
-                <label style={{ margin: 0 }}>Code 2FA (TOTP)</label>
+                <label style={{ margin: 0 }}>{t("form.totpLabel")}</label>
                 <div className="flex items-center gap-2">
                   {isEdit && !totpLoaded && (
                     <button
@@ -1013,7 +1019,7 @@ function EntryDialog({
                       onClick={loadCurrentSecrets}
                       className="btn btn-ghost btn-xs"
                     >
-                      Charger l&apos;actuel
+                      {t("form.loadCurrentBtn")}
                     </button>
                   )}
                   <button
@@ -1021,7 +1027,7 @@ function EntryDialog({
                     onClick={() => setShowTotpSecret((v) => !v)}
                     className="btn btn-ghost btn-xs"
                   >
-                    {showTotpSecret ? "Masquer" : "Voir"}
+                    {showTotpSecret ? t("hideBtn") : t("revealBtn")}
                   </button>
                 </div>
               </div>
@@ -1034,25 +1040,24 @@ function EntryDialog({
                 }}
                 placeholder={
                   isEdit && !totpLoaded
-                    ? "(inchangé)"
-                    : "Secret base32 ou otpauth://…"
+                    ? t("form.unchanged")
+                    : t("form.totpPlaceholder")
                 }
                 className="input input-mono"
               />
               <div className="help" style={{ marginTop: 4 }}>
-                Optionnel. Secret base32 ou URL otpauth:// — l&apos;extension
-                affichera le code 6 chiffres en temps réel.
+                {t("form.totpHint")}
               </div>
             </div>
             <div className="field">
               <label>Tags</label>
               <div className="flex flex-wrap gap-1.5 items-center">
-                {tags.map((t) => (
-                  <span key={t} className="chip" style={{ gap: 4 }}>
-                    {t}
+                {tags.map((tag) => (
+                  <span key={tag} className="chip" style={{ gap: 4 }}>
+                    {tag}
                     <button
                       type="button"
-                      onClick={() => setTags(tags.filter((x) => x !== t))}
+                      onClick={() => setTags(tags.filter((x) => x !== tag))}
                       style={{
                         background: "none",
                         border: "none",
@@ -1092,11 +1097,11 @@ function EntryDialog({
                 onChange={(e) => setFavorite(e.target.checked)}
                 style={{ cursor: "pointer" }}
               />
-              <span>⭐ Favori</span>
+              <span>{t("form.favouriteCheckLabel")}</span>
             </label>
             {isEdit && movableCollections.length > 0 && (
               <div className="field">
-                <label htmlFor="entryCollection">Collection</label>
+                <label htmlFor="entryCollection">{t("form.collectionLabel")}</label>
                 <select
                   id="entryCollection"
                   value={selectedCollectionId}
@@ -1104,9 +1109,7 @@ function EntryDialog({
                   className="select"
                 >
                   <option value={currentCollectionId}>
-                    {/* La collection courante n'est pas dans movableCollections,
-                        on l'affiche separement comme defaut. */}
-                    (rester dans cette collection)
+                    {t("form.stayInCollection")}
                   </option>
                   {movableCollections.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -1115,8 +1118,7 @@ function EntryDialog({
                   ))}
                 </select>
                 <div className="help">
-                  Pour déplacer cette entrée vers une autre collection du
-                  même {/* org/projet selon le scope */} scope.
+                  {t("form.moveCollectionHint")}
                 </div>
               </div>
             )}
@@ -1128,14 +1130,14 @@ function EntryDialog({
               onClick={onClose}
               className="btn btn-ghost btn-sm"
             >
-              Annuler
+              {t("form.cancelBtn")}
             </button>
             <button
               type="submit"
               disabled={pending || !name.trim()}
               className="btn btn-primary btn-sm"
             >
-              {pending ? "Enregistrement…" : isEdit ? "Mettre à jour" : "Créer"}
+              {pending ? t("form.savingBtn") : isEdit ? t("form.updateBtn") : t("form.createEntryBtn")}
             </button>
           </div>
         </form>

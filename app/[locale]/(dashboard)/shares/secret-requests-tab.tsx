@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import SecretRequestRevealDialog from "./secret-request-reveal-dialog";
 
 type Status =
@@ -31,14 +32,6 @@ type SecretRequest = {
   status: Status;
 };
 
-const STATUS_LABEL: Record<Status, string> = {
-  pending: "en attente",
-  received: "reçu",
-  imported: "importé",
-  revoked: "révoqué",
-  expired: "expiré",
-};
-
 const STATUS_ICON: Record<Status, string> = {
   pending: "⏳",
   received: "✅",
@@ -55,23 +48,25 @@ const STATUS_CHIP: Record<Status, string> = {
   expired: "role-cancelled",
 };
 
-function timeUntil(iso: string): string {
+type SharesT = ReturnType<typeof useTranslations<"shares">>;
+
+function timeUntil(iso: string, t: SharesT): string {
   const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return "expiré";
+  if (ms <= 0) return t("timeExpired");
   const h = Math.floor(ms / 3_600_000);
-  if (h >= 24) return `${Math.floor(h / 24)} j`;
-  if (h >= 1) return `${h} h`;
+  if (h >= 24) return t("timeDays", { n: Math.floor(h / 24) });
+  if (h >= 1) return t("timeHours", { n: h });
   const m = Math.max(1, Math.floor(ms / 60_000));
-  return `${m} min`;
+  return t("timeMins", { n: m });
 }
 
-function timeAgo(iso: string): string {
+function timeAgo(iso: string, t: SharesT): string {
   const ms = Date.now() - new Date(iso).getTime();
   const m = Math.floor(ms / 60_000);
-  if (m < 60) return `il y a ${Math.max(1, m)} min`;
+  if (m < 60) return t("timeAgoMins", { n: Math.max(1, m) });
   const h = Math.floor(m / 60);
-  if (h < 24) return `il y a ${h} h`;
-  return `il y a ${Math.floor(h / 24)} j`;
+  if (h < 24) return t("timeAgoHours", { n: h });
+  return t("timeAgoDays", { n: Math.floor(h / 24) });
 }
 
 export default function SecretRequestsTab({
@@ -81,6 +76,7 @@ export default function SecretRequestsTab({
    *  création d'une demande via le bouton du tab-bar). */
   refreshKey?: number;
 }) {
+  const t = useTranslations("shares");
   const [requests, setRequests] = useState<SecretRequest[] | null>(null);
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [orgFilter, setOrgFilter] = useState<string>("");
@@ -95,7 +91,7 @@ export default function SecretRequestsTab({
     if (statusFilter) params.set("status", statusFilter);
     const res = await fetch(`/api/secret-requests?${params.toString()}`);
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as {
@@ -104,27 +100,22 @@ export default function SecretRequestsTab({
     };
     setRequests(data.requests);
     setOrgs(data.orgs);
-  }, [orgFilter, statusFilter]);
+  }, [orgFilter, statusFilter, t]);
 
   useEffect(() => {
     reload();
   }, [reload, refreshKey]);
 
   async function copyLink(id: string) {
-    // On rebuild l'URL côté client (le serveur ne renvoie pas le token brut
-    // dans le détail — sécurité). Pour partager le lien à nouveau il faut
-    // l'avoir copié au moment de la création. Sinon : recréer une demande.
-    alert(
-      "Pour des raisons de sécurité, le lien complet n'est affiché qu'une seule fois (à la création). Recréez une demande pour obtenir un nouveau lien.",
-    );
+    alert(t("requestLinkOnce"));
     void id;
   }
 
   async function revoke(id: string, label: string) {
-    if (!confirm(`Révoquer la demande "${label}" ?`)) return;
+    if (!confirm(t("requestRevoke", { label }))) return;
     const res = await fetch(`/api/secret-requests/${id}`, { method: "DELETE" });
     if (res.ok) reload();
-    else setError("Révocation impossible.");
+    else setError(t("requestRevokeError"));
   }
 
   const reveal = revealId ? requests?.find((r) => r.id === revealId) : null;
@@ -162,7 +153,7 @@ export default function SecretRequestsTab({
           className="select"
           style={{ maxWidth: 200 }}
         >
-          <option value="">Toutes les orgs</option>
+          <option value="">{t("requestAllOrgs")}</option>
           {orgs.map((o) => (
             <option key={o.id} value={o.slug}>
               {o.name}
@@ -175,32 +166,31 @@ export default function SecretRequestsTab({
           className="select"
           style={{ maxWidth: 200 }}
         >
-          <option value="">Tous statuts</option>
-          <option value="pending">En attente</option>
-          <option value="received">Reçu</option>
-          <option value="imported">Importé</option>
-          <option value="revoked">Révoqué</option>
-          <option value="expired">Expiré</option>
+          <option value="">{t("requestAllStatuses")}</option>
+          <option value="pending">{t("requestStatus.pending")}</option>
+          <option value="received">{t("requestStatus.received")}</option>
+          <option value="imported">{t("requestStatus.imported")}</option>
+          <option value="revoked">{t("requestStatus.revoked")}</option>
+          <option value="expired">{t("requestStatus.expired")}</option>
         </select>
       </div>
 
       {error && <p className="error-text">{error}</p>}
 
       {requests === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : requests.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-title">Aucune demande externe</div>
+          <div className="empty-state-title">{t("externalEmpty")}</div>
           <p className="help" style={{ marginTop: 6 }}>
-            Cliquez sur « Autoriser un partage externe » pour générer un lien
-            à transmettre à un tiers.
+            {t("externalEmptyHint")}
           </p>
         </div>
       ) : (
         <div className="row-list">
           {requests.map((r) => (
             <div key={r.id} className="row" id={`req-${r.id}`}>
-              <div className="row-icon" title={STATUS_LABEL[r.status]}>
+              <div className="row-icon" title={t(`requestStatus.${r.status}`)}>
                 {STATUS_ICON[r.status]}
               </div>
               <div className="row-info">
@@ -215,7 +205,7 @@ export default function SecretRequestsTab({
                 >
                   <span>{r.label}</span>
                   <span className={`role ${STATUS_CHIP[r.status]}`}>
-                    {STATUS_LABEL[r.status]}
+                    {t(`requestStatus.${r.status}`)}
                   </span>
                 </div>
                 <div className="row-meta">
@@ -223,29 +213,29 @@ export default function SecretRequestsTab({
                   {r.project && <span>· {r.project.name}</span>}
                   {r.environmentName && r.secretKey && (
                     <span>
-                      · cible <code className="code-mono">{r.environmentName}/{r.secretKey}</code>
+                      · <code className="code-mono">{r.environmentName}/{r.secretKey}</code>
                     </span>
                   )}
-                  <span>· demandé par {r.requestedByEmail}</span>
+                  <span>· {t("requestBy", { email: r.requestedByEmail })}</span>
                 </div>
                 <div
                   className="row-meta"
                   style={{ marginTop: 2, fontSize: 12 }}
                 >
                   {r.status === "pending" && (
-                    <span>expire dans {timeUntil(r.expiresAt)}</span>
+                    <span>{t("requestExpiresIn", { time: timeUntil(r.expiresAt, t) })}</span>
                   )}
                   {r.status === "received" && r.submittedAt && (
-                    <span>reçu {timeAgo(r.submittedAt)}</span>
+                    <span>{t("requestReceivedAt", { time: timeAgo(r.submittedAt, t) })}</span>
                   )}
                   {r.status === "imported" && r.importedAt && (
-                    <span>importé {timeAgo(r.importedAt)}</span>
+                    <span>{t("requestImportedAt", { time: timeAgo(r.importedAt, t) })}</span>
                   )}
                   {r.status === "revoked" && r.revokedAt && (
-                    <span>révoqué {timeAgo(r.revokedAt)}</span>
+                    <span>{t("requestRevokedAt", { time: timeAgo(r.revokedAt, t) })}</span>
                   )}
                   {r.status === "expired" && (
-                    <span>expiré {timeAgo(r.expiresAt)}</span>
+                    <span>{t("requestExpiredAt", { time: timeAgo(r.expiresAt, t) })}</span>
                   )}
                 </div>
               </div>
@@ -255,9 +245,9 @@ export default function SecretRequestsTab({
                     type="button"
                     onClick={() => copyLink(r.id)}
                     className="btn btn-ghost btn-xs"
-                    title="Le lien complet n'est dispo qu'à la création (sécurité)"
+                    title={t("requestLinkOnce")}
                   >
-                    ⓘ Lien
+                    ⓘ
                   </button>
                 )}
                 {(r.status === "received" || r.status === "imported") && (
@@ -266,7 +256,7 @@ export default function SecretRequestsTab({
                     onClick={() => setRevealId(r.id)}
                     className="btn btn-ghost btn-xs"
                   >
-                    Révéler
+                    {t("requestRevealBtn")}
                   </button>
                 )}
                 {r.status !== "revoked" && r.status !== "imported" && (
@@ -275,7 +265,7 @@ export default function SecretRequestsTab({
                     onClick={() => revoke(r.id, r.label)}
                     className="btn btn-danger btn-xs"
                   >
-                    Révoquer
+                    {t("requestRevokeBtn")}
                   </button>
                 )}
               </div>

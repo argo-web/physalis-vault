@@ -20,7 +20,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   const secrets = await prisma.orgSecret.findMany({
     where: { organizationId: access.organization.id },
-    select: { key: true, updatedAt: true, createdAt: true },
+    select: { key: true, updatedAt: true, createdAt: true, expiresAt: true },
     orderBy: { key: "asc" },
   });
 
@@ -29,11 +29,11 @@ export async function GET(_req: Request, { params }: Params) {
 
 export async function POST(req: Request, { params }: Params) {
   const { slug } = await params;
-  const access = await requireOrgMember(slug, "ADMIN");
+  const access = await requireOrgMember(slug, "ADMIN_DEV");
   if ("error" in access) return access.error;
 
   const body = (await readJson(req)) as
-    | { key?: string; value?: string }
+    | { key?: string; value?: string; expiresInDays?: number | null }
     | null;
   if (!body || typeof body.key !== "string" || typeof body.value !== "string") {
     return NextResponse.json(
@@ -47,6 +47,16 @@ export async function POST(req: Request, { params }: Params) {
       { error: "Cle invalide (format ^[A-Z][A-Z0-9_]*$)" },
       { status: 400 },
     );
+  }
+
+  // Rappel manuel de renouvellement : durée → date d'expiration (null = sans).
+  let expiresAt: Date | null = null;
+  if (body.expiresInDays != null) {
+    const d = Number(body.expiresInDays);
+    if (!Number.isInteger(d) || d <= 0 || d > 3650) {
+      return NextResponse.json({ error: "expiresInDays invalide (1-3650)" }, { status: 400 });
+    }
+    expiresAt = new Date(Date.now() + d * 86_400_000);
   }
 
   // Lit la valeur ACTUELLE (encryptedValue/iv/tag) pour snapshot avant
@@ -81,9 +91,11 @@ export async function POST(req: Request, { params }: Params) {
         key,
         organizationId: access.organization.id,
         ...payload,
+        expiresAt,
       },
-      update: payload,
-      select: { id: true, key: true, updatedAt: true, createdAt: true },
+      // Re-sauvegarde = renouvellement : on réinitialise createdAt + expiresAt.
+      update: { ...payload, expiresAt, createdAt: new Date() },
+      select: { id: true, key: true, updatedAt: true, createdAt: true, expiresAt: true },
     });
   });
 
@@ -98,6 +110,11 @@ export async function POST(req: Request, { params }: Params) {
   });
 
   return NextResponse.json({
-    secret: { key: secret.key, createdAt: secret.createdAt, updatedAt: secret.updatedAt },
+    secret: {
+      key: secret.key,
+      createdAt: secret.createdAt,
+      updatedAt: secret.updatedAt,
+      expiresAt: secret.expiresAt,
+    },
   });
 }

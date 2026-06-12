@@ -31,6 +31,11 @@ export const authConfig = {
         token.role = (user as { role: string }).role;
         token.tenantSlug =
           (user as { tenantSlug?: string | null }).tenantSlug ?? null;
+        // #5 — instant d'émission (ms epoch), figé pour la durée de vie du
+        // JWT (les rotations n'ont pas `user`). requireUser() le compare à
+        // User.sessionsValidFrom pour invalider les sessions antérieures à un
+        // reset password / 2FA disable, avant l'expiration naturelle (8h).
+        token.loginAt = Date.now();
       }
       return token;
     },
@@ -40,6 +45,8 @@ export const authConfig = {
         session.user.role = token.role as Role;
         session.user.tenantSlug =
           (token.tenantSlug as string | null | undefined) ?? null;
+        session.user.loginAt =
+          (token.loginAt as number | null | undefined) ?? null;
       }
       return session;
     },

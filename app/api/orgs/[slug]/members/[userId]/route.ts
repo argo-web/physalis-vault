@@ -113,6 +113,26 @@ export async function DELETE(req: Request, { params }: Params) {
     prisma.orgMember.delete({ where: { id: target.id } }),
   ]);
 
+  // Purge prudente de l'orphelin : si l'user n'est plus membre d'AUCUNE org
+  // ET n'a aucune donnée perso (coffre vide), on supprime son compte pour
+  // éviter un compte fantôme. Sinon on le conserve — il ne consomme de toute
+  // façon plus de siège (modèle Phase B : on compte les membres d'org, pas
+  // les Users). On ne détruit JAMAIS un coffre perso non vide via un retrait.
+  let purgedUser = false;
+  const remainingMemberships = await prisma.orgMember.count({
+    where: { userId },
+  });
+  if (remainingMemberships === 0) {
+    const [vaultEntries, vaultCollections] = await Promise.all([
+      prisma.vaultEntry.count({ where: { userId } }),
+      prisma.vaultCollection.count({ where: { userId } }),
+    ]);
+    if (vaultEntries === 0 && vaultCollections === 0) {
+      await prisma.user.delete({ where: { id: userId } });
+      purgedUser = true;
+    }
+  }
+
   logAction({
     action: "MEMBER_REMOVE",
     actor: { kind: "user", userId: access.user.id, email: access.user.email },
@@ -122,6 +142,8 @@ export async function DELETE(req: Request, { params }: Params) {
     metadata: {
       previousRole: target.role,
       cascadedRevokedTokens: revokedTokens.count,
+      orphanUserPurged: purgedUser,
+      orphanUserKept: remainingMemberships === 0 && !purgedUser,
     },
     req,
   });

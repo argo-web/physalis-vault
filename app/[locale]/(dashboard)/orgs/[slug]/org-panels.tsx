@@ -13,8 +13,9 @@ import TeamVaultPanel from "../../team-vault-panel";
 const ORG_ROLE_RANK: Record<OrgRole, number> = {
   MEMBER: 1,
   DEV: 2,
-  ADMIN: 3,
-  OWNER: 4,
+  ADMIN_DEV: 3,
+  ADMIN: 4,
+  OWNER: 5,
 };
 
 type Tab = "members" | "secrets" | "servers" | "vault" | "tokens";

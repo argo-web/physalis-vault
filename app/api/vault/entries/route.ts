@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
+import { estimateStrength } from "@/lib/password-strength";
 import { readJson, requireUser } from "@/lib/api";
 import { logAction } from "@/lib/audit";
 import { parseTotpInput } from "@/lib/otpauth-parse";
@@ -59,14 +60,20 @@ export async function GET(req: Request) {
   else if (collectionParam) where.collectionId = collectionParam;
 
   // sort : "name" (défaut, favoris en haut puis A→Z), "recent" (récents
-  // d'abord), "favorite_first" (favoris en haut puis récents).
+  // d'abord), "favorite_first" (favoris en haut puis récents), "strength"
+  // (plus faibles d'abord — entries sans mot de passe reléguées en fin).
   const sort = url.searchParams.get("sort") ?? "name";
   const orderBy =
     sort === "recent"
       ? [{ updatedAt: "desc" as const }]
       : sort === "favorite_first"
         ? [{ favorite: "desc" as const }, { updatedAt: "desc" as const }]
-        : [{ favorite: "desc" as const }, { name: "asc" as const }];
+        : sort === "strength"
+          ? [
+              { passwordStrength: { sort: "asc" as const, nulls: "last" as const } },
+              { name: "asc" as const },
+            ]
+          : [{ favorite: "desc" as const }, { name: "asc" as const }];
 
   const entries = await prisma.vaultEntry.findMany({
     where,
@@ -77,6 +84,7 @@ export async function GET(req: Request) {
       username: true,
       tags: true,
       favorite: true,
+      passwordStrength: true,
       encryptedTotpSecret: true,
       collectionId: true,
       createdAt: true,
@@ -176,6 +184,9 @@ export async function POST(req: Request) {
   let encryptedPassword: string | null = null;
   let passwordIv: string | null = null;
   let passwordTag: string | null = null;
+  // Score de force calculé sur le clair, avant chiffrement (jamais recalculé
+  // depuis la valeur chiffrée). NULL si pas de mot de passe.
+  let passwordStrength: number | null = null;
   if (typeof body.password === "string" && body.password.length > 0) {
     if (body.password.length > PASSWORD_MAX) {
       return NextResponse.json(
@@ -187,6 +198,7 @@ export async function POST(req: Request) {
     encryptedPassword = payload.encryptedValue;
     passwordIv = payload.iv;
     passwordTag = payload.tag;
+    passwordStrength = estimateStrength(body.password).score;
   }
 
   let encryptedTotpSecret: string | null = null;
@@ -222,6 +234,7 @@ export async function POST(req: Request) {
       encryptedPassword,
       passwordIv,
       passwordTag,
+      passwordStrength,
       encryptedTotpSecret,
       totpSecretIv,
       totpSecretTag,
@@ -235,6 +248,7 @@ export async function POST(req: Request) {
       username: true,
       tags: true,
       favorite: true,
+      passwordStrength: true,
       collectionId: true,
       createdAt: true,
       updatedAt: true,

@@ -1,11 +1,13 @@
 import Image from "next/image";
+import { getTranslations } from "next-intl/server";
 import ForgotForm from "./forgot-form";
 
 export const metadata = {
-  title: "Mot de passe oublié — Physalis",
+  title: "Forgot password — Physalis",
 };
 
-export default function ForgotPasswordPage() {
+export default async function ForgotPasswordPage() {
+  const t = await getTranslations("auth.forgotPassword");
   return (
     <div className="login-card">
       <div className="login-brand">
@@ -19,7 +21,7 @@ export default function ForgotPasswordPage() {
         />
         <div className="login-brand-text">
           <div className="login-brand-name">Physalis</div>
-          <div className="login-brand-tag">Mot de passe oublié</div>
+          <div className="login-brand-tag">{t("pageTag")}</div>
         </div>
       </div>
       <ForgotForm />

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { RiShareForward2Line } from "@remixicon/react";
 
 type Status = "active" | "consumed" | "expired" | "revoked";
@@ -16,13 +17,6 @@ type ShareItem = {
   status: Status;
 };
 
-const STATUS_LABEL: Record<Status, string> = {
-  active: "Actif",
-  consumed: "Consommé",
-  expired: "Expiré",
-  revoked: "Révoqué",
-};
-
 const STATUS_BADGE: Record<Status, string> = {
   active: "badge success",
   consumed: "badge",
@@ -30,7 +24,15 @@ const STATUS_BADGE: Record<Status, string> = {
   revoked: "badge danger",
 };
 
+const STATUS_LABEL_KEY: Record<Status, string> = {
+  active: "statusActive",
+  consumed: "statusConsumed",
+  expired: "statusExpired",
+  revoked: "statusRevoked",
+};
+
 export default function SharesList() {
+  const t = useTranslations("shares");
   const [shares, setShares] = useState<ShareItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +40,7 @@ export default function SharesList() {
     setError(null);
     const res = await fetch("/api/me/shares");
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as { shares: ShareItem[] };
@@ -50,27 +52,24 @@ export default function SharesList() {
   }, [reload]);
 
   async function revoke(s: ShareItem) {
-    if (!confirm(`Révoquer ce partage ?\n\n${s.title ?? "(sans titre)"}`)) {
+    if (!confirm(t("revokeConfirm", { title: s.title ?? t("noTitle") }))) {
       return;
     }
     const res = await fetch(`/api/me/shares/${s.id}`, { method: "DELETE" });
     if (!res.ok) {
-      setError("Révocation impossible.");
+      setError(t("revokeError"));
       return;
     }
     reload();
   }
 
   if (error) return <p className="error-text">{error}</p>;
-  if (shares === null) return <p className="help">Chargement…</p>;
+  if (shares === null) return <p className="help">{t("loading")}</p>;
   if (shares.length === 0) {
     return (
       <div className="empty-state">
-        <div className="empty-state-title">Aucun partage</div>
-        <div>
-          Clique sur « 📤 Créer un partage » en haut à droite pour créer ton
-          premier lien à usage unique.
-        </div>
+        <div className="empty-state-title">{t("noShares")}</div>
+        <div>{t("noSharesHint")}</div>
       </div>
     );
   }
@@ -82,30 +81,29 @@ export default function SharesList() {
           <div className="row-icon"><RiShareForward2Line size={18} aria-hidden /></div>
           <div className="row-info">
             <div className="row-name">
-              {s.title ?? <span className="text-muted">(sans titre)</span>}{" "}
+              {s.title ?? <span className="text-muted">{t("noTitle")}</span>}{" "}
               <span
                 className={STATUS_BADGE[s.status]}
                 style={{ marginLeft: 6 }}
               >
-                {STATUS_LABEL[s.status]}
+                {t(STATUS_LABEL_KEY[s.status])}
               </span>
             </div>
             <div className="row-meta">
-              <span>Créé le {new Date(s.createdAt).toLocaleString()}</span>
-              <span>· Expire {new Date(s.expiresAt).toLocaleString()}</span>
+              <span>{t("createdAt", { date: new Date(s.createdAt).toLocaleString() })}</span>
+              <span>· {t("expiresAt", { date: new Date(s.expiresAt).toLocaleString() })}</span>
               {s.consumedAt && (
                 <span>
-                  · Consommé {new Date(s.consumedAt).toLocaleString()}
+                  · {t("consumedAt", { date: new Date(s.consumedAt).toLocaleString() })}
                   {s.viewedFromIp && (
                     <>
-                      {" "}depuis{" "}
-                      <code className="code-mono">{s.viewedFromIp}</code>
+                      {" "}{t("consumedFrom", { ip: s.viewedFromIp })}
                     </>
                   )}
                 </span>
               )}
               {s.revokedAt && (
-                <span>· Révoqué {new Date(s.revokedAt).toLocaleString()}</span>
+                <span>· {t("revokedAt", { date: new Date(s.revokedAt).toLocaleString() })}</span>
               )}
             </div>
           </div>
@@ -116,7 +114,7 @@ export default function SharesList() {
                 onClick={() => revoke(s)}
                 className="btn btn-danger btn-xs"
               >
-                Révoquer
+                {t("revokeBtn")}
               </button>
             )}
           </div>

@@ -19,6 +19,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
+import { estimateStrength } from "@/lib/password-strength";
 import { readJson, requireUser, slugify } from "@/lib/api";
 import { logAction } from "@/lib/audit";
 import { parseImport, type ImportedEntry } from "@/lib/csv-import";
@@ -136,11 +137,13 @@ function buildCreateData(
   let encryptedPassword: string | null = null;
   let passwordIv: string | null = null;
   let passwordTag: string | null = null;
+  let passwordStrength: number | null = null;
   if (e.password) {
     const payload = encrypt(e.password);
     encryptedPassword = payload.encryptedValue;
     passwordIv = payload.iv;
     passwordTag = payload.tag;
+    passwordStrength = estimateStrength(e.password).score;
   }
 
   let encryptedTotpSecret: string | null = null;
@@ -165,6 +168,7 @@ function buildCreateData(
     encryptedPassword,
     passwordIv,
     passwordTag,
+    passwordStrength,
     encryptedTotpSecret,
     totpSecretIv,
     totpSecretTag,

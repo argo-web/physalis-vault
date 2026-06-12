@@ -13,8 +13,9 @@
 //      cle du fragment → affiche.
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { RiShareForward2Line } from "@remixicon/react";
+import { useTranslations, useLocale } from "next-intl";
 import {
   encryptShareContent,
   generateShareKey,
@@ -22,15 +23,16 @@ import {
 
 const TTL_OPTIONS: { value: number; label: string }[] = [
   { value: 900, label: "15 minutes" },
-  { value: 3600, label: "1 heure" },
-  { value: 14400, label: "4 heures" },
-  { value: 86400, label: "24 heures" },
+  { value: 3600, label: "1 hour" },
+  { value: 14400, label: "4 hours" },
+  { value: 86400, label: "24 hours" },
 ];
 
 const DEFAULT_TTL = 3600;
 const CONTENT_MAX = 10000;
 
 export default function ShareCreateButton() {
+  const t = useTranslations("shares");
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -38,9 +40,8 @@ export default function ShareCreateButton() {
         type="button"
         onClick={() => setOpen(true)}
         className="btn btn-primary btn-sm"
-        title="Créer un partage à durée limitée"
       >
-        <RiShareForward2Line size={14} aria-hidden /> Créer un partage
+        <RiShareForward2Line size={14} aria-hidden /> {t("createBtn")}
       </button>
       {open && <ShareCreateDialog onClose={() => setOpen(false)} />}
     </>
@@ -54,6 +55,8 @@ const TTL_PASSWORD_THRESHOLD = 14400;
 const PASSWORD_MIN = 4;
 
 function ShareCreateDialog({ onClose }: { onClose: () => void }) {
+  const t = useTranslations("shares");
+  const locale = useLocale();
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
   const [recipientEmail, setRecipientEmail] = useState("");
@@ -72,15 +75,15 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     setError(null);
     if (!content.trim()) {
-      setError("Le contenu est requis.");
+      setError(t("createDialog.errorEmpty"));
       return;
     }
     if (content.length > CONTENT_MAX) {
-      setError(`Maximum ${CONTENT_MAX} caractères.`);
+      setError(t("createDialog.errorLength", { max: CONTENT_MAX }));
       return;
     }
     if (showPasswordField && password && password.length < PASSWORD_MIN) {
-      setError(`Mot de passe : minimum ${PASSWORD_MIN} caractères.`);
+      setError(t("createDialog.errorPassword", { min: PASSWORD_MIN }));
       return;
     }
     startTransition(async () => {
@@ -102,7 +105,7 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
           const data = (await res.json().catch(() => null)) as
             | { error?: string }
             | null;
-          setError(data?.error ?? "Création impossible.");
+          setError(data?.error ?? t("createDialog.createError"));
           return;
         }
         const data = (await res.json()) as {
@@ -110,13 +113,10 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
           token: string;
           expiresAt: string;
         };
-        // Construit l'URL avec la cle dans le fragment (jamais envoye au serveur).
-        const url = `${window.location.origin}/share/${data.token}#${key}`;
+        const url = `${window.location.origin}/${locale}/share/${data.token}#${key}`;
         setShareUrl(url);
         setExpiresAt(data.expiresAt);
 
-        // Envoi par email si demande. Best-effort — si l'email echoue, le
-        // share est quand meme cree, l'user peut copier l'URL manuellement.
         if (recipientEmail.trim()) {
           const sendRes = await fetch(`/api/me/shares/${data.id}/send`, {
             method: "POST",
@@ -128,14 +128,12 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
             const sendData = (await sendRes.json().catch(() => null)) as
               | { error?: string }
               | null;
-            setError(
-              `Lien créé mais email non envoyé : ${sendData?.error ?? "erreur"}.`,
-            );
+            setError(t("createDialog.errorEmailFailed", { error: sendData?.error ?? "error" }));
           }
         }
       } catch (err) {
         console.error(err);
-        setError("Échec du chiffrement local.");
+        setError(t("createDialog.encryptionError"));
       }
     });
   }
@@ -147,12 +145,12 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      setError("Copie impossible.");
+      setError(t("copyError"));
     }
   }
 
   const expiresLabel = expiresAt
-    ? new Date(expiresAt).toLocaleString("fr-FR")
+    ? new Date(expiresAt).toLocaleString()
     : "";
 
   return (
@@ -160,13 +158,13 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
       <div className="dialog dialog-lg" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <h2 className="dialog-title">
-            <RiShareForward2Line size={18} aria-hidden /> Partager un secret
+            <RiShareForward2Line size={18} aria-hidden /> {t("createDialog.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("createDialog.closeLabel")}
           >
             ✕
           </button>
@@ -186,16 +184,15 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
                     color: "var(--fg)",
                   }}
                 >
-                  ✓ Email envoyé à <strong>{recipientEmail}</strong>.
+                  {t("createDialog.emailSentTo", { email: recipientEmail })}
                 </p>
               )}
               <p className="help">
-                <strong>L&apos;URL ne sera plus jamais affichée.</strong>{" "}
-                Copie-la maintenant et envoie-la sur un canal sécurisé.
-                Expire le {expiresLabel}.
+                <strong>{t("createDialog.urlNotShownAgain")}</strong>{" "}
+                {t("createDialog.expiresOn", { date: expiresLabel })}
               </p>
               <div className="field">
-                <label>Lien de partage</label>
+                <label>{t("createDialog.linkLabel")}</label>
                 <div
                   className="code-mono"
                   style={{
@@ -211,12 +208,9 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <p className="help">
-                <strong>Architecture zero-knowledge :</strong> la clé de
-                chiffrement est dans le fragment <code>#</code> de l&apos;URL,
-                jamais envoyée au serveur. Le contenu n&apos;est jamais lisible
-                en base.{" "}
+                <strong>{t("createDialog.zkNote")} :</strong>{" "}
                 <Link href="/shares" className="text-accent">
-                  Voir mes partages
+                  {t("createDialog.seeMyShares")}
                 </Link>
               </p>
             </div>
@@ -226,58 +220,43 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
                 onClick={copyUrl}
                 className="btn btn-primary btn-sm"
               >
-                {copied ? "✓ Copié" : "Copier le lien"}
+                {copied ? t("createDialog.copiedBtn") : t("createDialog.copyBtn")}
               </button>
               <button
                 type="button"
                 onClick={onClose}
                 className="btn btn-ghost btn-sm"
               >
-                Fermer
+                {t("createDialog.closeLabel")}
               </button>
             </div>
           </>
         ) : (
           <form onSubmit={submit}>
             <div className="dialog-body">
-              <p className="help">
-                Texte libre (mot de passe, .env, paragraphe). Chiffré
-                localement avec une clé qui n&apos;est jamais envoyée au
-                serveur. Lien à usage unique.
-              </p>
               <div className="field">
-                <label>Titre (optionnel)</label>
+                <label>{t("createDialog.titleLabel")}</label>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="ex: Accès staging Marc"
                   maxLength={200}
                   className="input"
                 />
-                <div className="help" style={{ marginTop: 4 }}>
-                  Visible côté serveur (pour la liste « Mes partages »). Ne
-                  pas y mettre de secret.
-                </div>
               </div>
               <div className="field">
-                <label>Contenu *</label>
+                <label>{t("createDialog.contentLabel")}</label>
                 <textarea
                   required
                   autoFocus
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="Le mot de passe, le .env, …"
                   rows={10}
                   maxLength={CONTENT_MAX}
                   className="textarea textarea-mono"
                 />
-                <div className="help" style={{ marginTop: 4 }}>
-                  {content.length} / {CONTENT_MAX} caractères. Chiffré côté
-                  navigateur avant l&apos;envoi.
-                </div>
               </div>
               <div className="field">
-                <label>Durée de vie</label>
+                <label>{t("createDialog.durationLabel")}</label>
                 <select
                   value={ttl}
                   onChange={(e) => setTtl(Number(e.target.value))}
@@ -289,45 +268,32 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
                     </option>
                   ))}
                 </select>
-                <div className="help" style={{ marginTop: 4 }}>
-                  Le lien sera détruit après lecture <strong>OU</strong>{" "}
-                  expiration, selon ce qui arrive en premier.
-                </div>
               </div>
 
               {showPasswordField && (
                 <div className="field">
-                  <label>Mot de passe (optionnel)</label>
+                  <label>{t("createDialog.passwordLabel")}</label>
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder={`≥ ${PASSWORD_MIN} caractères`}
+                    placeholder={`≥ ${PASSWORD_MIN} chars`}
                     autoComplete="new-password"
                     className="input"
                   />
-                  <div className="help" style={{ marginTop: 4 }}>
-                    Recommandé pour TTL ≥ 4h. À transmettre au destinataire
-                    via un autre canal que le lien (SMS, appel...).
-                  </div>
                 </div>
               )}
 
               <div className="field">
-                <label>Envoyer par email (optionnel)</label>
+                <label>{t("createDialog.emailLabel")}</label>
                 <input
                   type="email"
                   value={recipientEmail}
                   onChange={(e) => setRecipientEmail(e.target.value)}
-                  placeholder="destinataire@example.com"
+                  placeholder="recipient@example.com"
                   autoComplete="off"
                   className="input"
                 />
-                <div className="help" style={{ marginTop: 4 }}>
-                  ⚠ Mailgun verra l&apos;URL avec la clé de chiffrement
-                  (zero-knowledge maintenu côté Physalis, mais pas vis-à-vis
-                  du transport email).
-                </div>
               </div>
 
               {error && <p className="error-text">{error}</p>}
@@ -338,14 +304,14 @@ function ShareCreateDialog({ onClose }: { onClose: () => void }) {
                 onClick={onClose}
                 className="btn btn-ghost btn-sm"
               >
-                Annuler
+                {t("createDialog.cancelBtn")}
               </button>
               <button
                 type="submit"
                 disabled={pending || !content.trim()}
                 className="btn btn-primary btn-sm"
               >
-                {pending ? "Chiffrement…" : "Créer le lien"}
+                {pending ? t("createDialog.encryptingBtn") : t("createDialog.submitBtn")}
               </button>
             </div>
           </form>

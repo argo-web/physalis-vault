@@ -11,7 +11,8 @@
 // (dataset DOM + event `secretvault-extension-ready` + polling fallback).
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 
 const DISMISS_KEY = "physalis-vault-extension-banner-dismissed";
 const POLL_INTERVAL_MS = 500;
@@ -20,6 +21,7 @@ const DETECT_EVENT = "secretvault-extension-ready";
 const DATASET_KEY = "secretvaultExt";
 
 export default function ExtensionBanner({ totalCount }: { totalCount: number }) {
+  const t = useTranslations("dashboard.extensionBanner");
   const [show, setShow] = useState(false);
 
   useEffect(() => {
@@ -90,18 +92,17 @@ export default function ExtensionBanner({ totalCount }: { totalCount: number }) 
     >
       <span aria-hidden style={{ fontSize: 18 }}>💡</span>
       <span style={{ flex: 1 }}>
-        Installe l&apos;extension Physalis pour auto-remplir tes credentials
-        directement depuis le navigateur.{" "}
+        {t("text")}{" "}
         <Link href="/dashboard" className="text-accent">
-          Voir les instructions
+          {t("link")}
         </Link>
         .
       </span>
       <button
         type="button"
         onClick={dismiss}
-        aria-label="Fermer ce bandeau"
-        title="Ne plus afficher"
+        aria-label={t("dismissLabel")}
+        title={t("dismissTitle")}
         style={{
           background: "transparent",
           border: "none",

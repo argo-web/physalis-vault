@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import { decryptFromSender } from "@/lib/secret-request-crypto";
+import { hybridDecryptFromSender, parsePrivateKey } from "@/lib/hybrid-kem";
 
 export default function SecretRequestRevealDialog({
   requestId,
@@ -20,6 +22,7 @@ export default function SecretRequestRevealDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const t = useTranslations("shares.revealDialog");
   const [privateKey, setPrivateKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [decrypted, setDecrypted] = useState<string | null>(null);
@@ -37,12 +40,7 @@ export default function SecretRequestRevealDialog({
   function onReveal(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    if (!privateKey.trim()) {
-      setError("Collez votre clé privée pour déchiffrer.");
-      return;
-    }
     startTransition(async () => {
-      // 1. Récupère le ciphertext + iv + ephemeral pub côté serveur
       const res = await fetch(
         `/api/secret-requests/${requestId}/reveal`,
         { method: "POST" },
@@ -50,10 +48,10 @@ export default function SecretRequestRevealDialog({
       if (!res.ok) {
         setError(
           res.status === 410
-            ? "Demande révoquée."
+            ? t("errorRevoked")
             : res.status === 404
-              ? "Pas encore soumis ou introuvable."
-              : "Impossible de récupérer le ciphertext.",
+              ? t("errorNotFound")
+              : t("errorFetch"),
         );
         return;
       }
@@ -61,24 +59,48 @@ export default function SecretRequestRevealDialog({
         encryptedSecret: string;
         iv: string;
         ephemeralPublicJwk: string;
+        mlkemCiphertext: string | null;
+        hybridVersion: number | null;
       };
-      // 2. Déchiffre LOCALEMENT dans le navigateur
       try {
-        const plain = await decryptFromSender(
-          {
-            ciphertext: payload.encryptedSecret,
-            iv: payload.iv,
-            ephemeralPublicJwk: payload.ephemeralPublicJwk,
-          },
-          privateKey.trim(),
-        );
+        // Détecte le format de la clé privée saisie (composite hybride ou
+        // JWK ECDH legacy) et choisit le chemin de déchiffrement adéquat.
+        const key = parsePrivateKey(privateKey);
+        const isHybrid =
+          payload.hybridVersion === 1 && payload.mlkemCiphertext != null;
+
+        let plain: string;
+        if (isHybrid) {
+          if (key.kind !== "hybrid") {
+            setError(t("error"));
+            return;
+          }
+          plain = await hybridDecryptFromSender(
+            {
+              ciphertext: payload.encryptedSecret,
+              iv: payload.iv,
+              ephemeralPublicJwk: payload.ephemeralPublicJwk,
+              mlkemCiphertext: payload.mlkemCiphertext!,
+            },
+            key.ecdh,
+            key.mlkem,
+          );
+        } else {
+          // Demande legacy (ECDH seul). Une clé composite reste utilisable :
+          // on en extrait le volet ECDH.
+          plain = await decryptFromSender(
+            {
+              ciphertext: payload.encryptedSecret,
+              iv: payload.iv,
+              ephemeralPublicJwk: payload.ephemeralPublicJwk,
+            },
+            key.ecdh,
+          );
+        }
         setDecrypted(plain);
-        // Remet le champ clé privée à vide par hygiène
         setPrivateKey("");
       } catch {
-        setError(
-          "Déchiffrement impossible. Clé privée invalide ou mauvaise demande ?",
-        );
+        setError(t("error"));
       }
     });
   }
@@ -101,7 +123,6 @@ export default function SecretRequestRevealDialog({
       );
       if (res.ok) {
         setImported(true);
-        // Trigger refresh côté liste
         setTimeout(() => {
           onChanged();
           onClose();
@@ -110,7 +131,7 @@ export default function SecretRequestRevealDialog({
         const data = (await res.json().catch(() => null)) as {
           error?: string;
         } | null;
-        setError(data?.error ?? "Import impossible.");
+        setError(data?.error ?? t("errorImport"));
       }
     });
   }
@@ -123,12 +144,12 @@ export default function SecretRequestRevealDialog({
         style={{ maxWidth: 720, width: "92vw" }}
       >
         <div className="dialog-header">
-          <h2 className="dialog-title">Révéler le secret</h2>
+          <h2 className="dialog-title">{t("title")}</h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("closeBtn")}
           >
             ✕
           </button>
@@ -142,19 +163,18 @@ export default function SecretRequestRevealDialog({
           {!decrypted ? (
             <form onSubmit={onReveal} className="flex flex-col gap-3">
               <div className="field">
-                <label>Clé privée (depuis votre coffre Physalis)</label>
+                <label>{t("privateKeyLabel")}</label>
                 <textarea
                   required
                   rows={6}
                   value={privateKey}
                   onChange={(e) => setPrivateKey(e.target.value)}
-                  placeholder='{"kty":"EC","crv":"P-256","d":"...","x":"...","y":"..."}'
+                  placeholder='{"v":1,"ecdh":"{...}","mlkem":"..."}'
                   className="input input-mono"
                   style={{ fontSize: 11, resize: "vertical" }}
                 />
                 <div className="help" style={{ marginTop: 4, fontSize: 12 }}>
-                  Elle n&apos;est jamais envoyée au serveur. Tout le
-                  déchiffrement se fait dans ce navigateur.
+                  {t("localHint")}
                 </div>
               </div>
               {error && <p className="error-text">{error}</p>}
@@ -166,21 +186,21 @@ export default function SecretRequestRevealDialog({
                   onClick={onClose}
                   className="btn btn-ghost btn-sm"
                 >
-                  Annuler
+                  {t("cancelBtn")}
                 </button>
                 <button
                   type="submit"
                   disabled={pending || !privateKey.trim()}
                   className="btn btn-primary btn-sm"
                 >
-                  {pending ? "Déchiffrement…" : "Déchiffrer localement"}
+                  {pending ? t("decryptingBtn") : t("submitBtn")}
                 </button>
               </div>
             </form>
           ) : (
             <>
               <div className="field">
-                <label>Secret déchiffré</label>
+                <label>{t("decryptedLabel")}</label>
                 <textarea
                   readOnly
                   rows={5}
@@ -195,7 +215,7 @@ export default function SecretRequestRevealDialog({
                   className="help"
                   style={{ color: "var(--success)", textAlign: "center" }}
                 >
-                  ✓ Importé dans le projet
+                  {t("imported")}
                 </p>
               )}
               {error && <p className="error-text">{error}</p>}
@@ -212,7 +232,7 @@ export default function SecretRequestRevealDialog({
                   onClick={copyDecrypted}
                   className="btn btn-ghost btn-sm"
                 >
-                  Copier
+                  {t("copyBtn")}
                 </button>
                 {canImport && !imported && (
                   <button
@@ -222,8 +242,8 @@ export default function SecretRequestRevealDialog({
                     className="btn btn-primary btn-sm"
                   >
                     {pending
-                      ? "Import…"
-                      : `Importer → ${envName} / ${secretKey}`}
+                      ? t("importingBtn")
+                      : t("importBtn", { env: envName ?? "", key: secretKey ?? "" })}
                   </button>
                 )}
                 <button
@@ -234,7 +254,7 @@ export default function SecretRequestRevealDialog({
                   }}
                   className="btn btn-ghost btn-sm"
                 >
-                  Fermer
+                  {t("closeBtn")}
                 </button>
               </div>
             </>

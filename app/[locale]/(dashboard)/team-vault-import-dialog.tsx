@@ -8,6 +8,7 @@
 // l'import.
 
 import { useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 
 type ImportFormat = "bitwarden" | "chrome" | "generic";
 
@@ -34,10 +35,11 @@ export default function TeamVaultImportDialog({
   onClose,
   onImported,
 }: {
-  basePath: string; // ex: /api/vault/org/foo/collections/bar
+  basePath: string;
   onClose: () => void;
   onImported: (count: number) => void;
 }) {
+  const t = useTranslations("vault.import");
   const [csv, setCsv] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -58,7 +60,7 @@ export default function TeamVaultImportDialog({
       setCsv(text);
       doPreview(text);
     };
-    reader.onerror = () => setError("Lecture du fichier impossible.");
+    reader.onerror = () => setError(t("error"));
     reader.readAsText(file);
   }
 
@@ -77,7 +79,7 @@ export default function TeamVaultImportDialog({
         setError(
           data && "error" in data && data.error
             ? data.error
-            : "Analyse du CSV impossible.",
+            : t("error"),
         );
         return;
       }
@@ -101,7 +103,7 @@ export default function TeamVaultImportDialog({
         setError(
           data && "error" in data && data.error
             ? data.error
-            : "Import impossible.",
+            : t("error"),
         );
         return;
       }
@@ -110,7 +112,7 @@ export default function TeamVaultImportDialog({
   }
 
   const formatLabel = preview
-    ? { bitwarden: "Bitwarden", chrome: "Chrome", generic: "Générique" }[
+    ? { bitwarden: "Bitwarden", chrome: "Chrome", generic: "Generic" }[
         preview.format
       ]
     : null;
@@ -119,30 +121,23 @@ export default function TeamVaultImportDialog({
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">Importer un CSV</h2>
+          <h2 className="dialog-title">{t("title")}</h2>
           <button
             type="button"
             onClick={onClose}
             className="dialog-close"
-            aria-label="Fermer"
+            aria-label={t("closeLabel")}
           >
             ✕
           </button>
         </div>
 
         <div className="dialog-body">
-          <p className="help">
-            Formats supportés&nbsp;: <strong>Bitwarden</strong>,{" "}
-            <strong>Chrome</strong>, CSV générique. Les mots de passe sont
-            chiffrés côté serveur avant stockage. Les entrées sont créées
-            dans cette collection ; la colonne{" "}
-            <code className="code-mono">folder</code> (si présente) est
-            conservée comme <strong>tag</strong>.
-          </p>
+          <p className="help">{t("formats")}</p>
 
           {!preview && (
             <div className="field" style={{ marginTop: 12 }}>
-              <label>Fichier CSV</label>
+              <label>{t("fileLabel")}</label>
               <input
                 type="file"
                 accept=".csv,text/csv"
@@ -161,12 +156,9 @@ export default function TeamVaultImportDialog({
                   {formatLabel}
                 </span>
               </div>
-              <p className="help">
-                <strong>{preview.imported}</strong> entrée(s) prête(s) à être
-                importée(s).
-              </p>
+              <p className="help">{t("preview", { count: preview.imported })}</p>
               <div className="row-meta" style={{ marginTop: 8 }}>
-                Aperçu (5 premières)&nbsp;:
+                {t("sampleTitle")}
               </div>
               <ul className="help" style={{ paddingLeft: 18, marginTop: 6 }}>
                 {preview.sample.map((e, i) => (
@@ -203,7 +195,7 @@ export default function TeamVaultImportDialog({
             onClick={onClose}
             className="btn btn-ghost btn-sm"
           >
-            Annuler
+            {t("cancelBtn")}
           </button>
           {preview && (
             <button
@@ -212,9 +204,7 @@ export default function TeamVaultImportDialog({
               disabled={pending}
               className="btn btn-primary btn-sm"
             >
-              {pending
-                ? "Import en cours…"
-                : `Importer ${preview.imported} entrée(s)`}
+              {pending ? t("importingBtn") : t("submitBtn", { count: preview.imported })}
             </button>
           )}
         </div>

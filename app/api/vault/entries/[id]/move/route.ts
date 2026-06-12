@@ -23,7 +23,7 @@ import { encrypt, decrypt } from "@/lib/crypto";
 import { readJson, requireUser } from "@/lib/api";
 import { logAction } from "@/lib/audit";
 import { hasVaultRole } from "@/lib/vault-access";
-import { isPlatformAdmin } from "@/lib/roles";
+import { isPlatformAdmin, hasDevPrivileges } from "@/lib/roles";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -108,7 +108,7 @@ async function resolveTarget(
     const implicit: VaultRole | null =
       isPlatformAdmin(userRole) || orgRole === "OWNER" || orgRole === "ADMIN"
         ? "OWNER"
-        : orgRole === "DEV"
+        : hasDevPrivileges(orgRole)
           ? "EDITOR"
           : null;
     const memberRole = collection.members[0]?.role ?? null;
@@ -166,7 +166,7 @@ async function resolveTarget(
       role = "OWNER";
     } else if (projectRole) {
       role = PROJECT_TO_VAULT[projectRole];
-    } else if (orgRole === "DEV") {
+    } else if (hasDevPrivileges(orgRole)) {
       role = "EDITOR";
     }
     if (!role) return null;

@@ -1,11 +1,13 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
+import { getTranslations } from "next-intl/server";
 import RegisterForm from "./register-form";
 
-export default function RegisterPage() {
+export default async function RegisterPage() {
   if (process.env.ALLOW_REGISTRATION !== "true") {
     notFound();
   }
+  const t = await getTranslations("auth.register");
   return (
     <div className="login-card">
       <div className="login-brand">
@@ -19,7 +21,7 @@ export default function RegisterPage() {
         />
         <div className="login-brand-text">
           <div className="login-brand-name">Physalis</div>
-          <div className="login-brand-tag">Créer un compte</div>
+          <div className="login-brand-tag">{t("pageTag")}</div>
         </div>
       </div>
       <RegisterForm />

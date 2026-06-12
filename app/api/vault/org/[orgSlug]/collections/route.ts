@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { readJson, slugify } from "@/lib/api";
 import { logAction } from "@/lib/audit";
 import { requireOrgScope } from "@/lib/vault-access";
+import { hasDevPrivileges } from "@/lib/roles";
 
 const NAME_MAX = 80;
 
@@ -21,7 +22,7 @@ export async function GET(_req: Request, { params }: Params) {
   // MEMBER ne voit que celles ou il est TeamVaultMember explicite.
   const orgRole = scope.orgRole;
   const isOrgAdmin = orgRole === "ADMIN" || orgRole === "OWNER";
-  const canSeeAll = isOrgAdmin || orgRole === "DEV";
+  const canSeeAll = isOrgAdmin || hasDevPrivileges(orgRole);
   const collections = await prisma.teamVaultCollection.findMany({
     where: {
       organizationId: scope.organizationId,
@@ -50,7 +51,7 @@ export async function GET(_req: Request, { params }: Params) {
   const VAULT_RANK = { VIEWER: 1, EDITOR: 2, OWNER: 3 } as const;
   function effectiveRole(memberRole: "OWNER" | "EDITOR" | "VIEWER" | undefined) {
     if (isOrgAdmin) return "OWNER" as const;
-    if (orgRole === "DEV") {
+    if (hasDevPrivileges(orgRole)) {
       if (!memberRole) return "EDITOR" as const;
       return VAULT_RANK[memberRole] >= VAULT_RANK.EDITOR
         ? memberRole
