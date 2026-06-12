@@ -38,13 +38,12 @@ export async function GET(_req: Request, { params }: Params) {
       description: string | null;
       requestedByEmail: string;
       publicKeyJwk: string;
-      mlkemPublicKey: string | null;
       submittedAt: Date | null;
       revokedAt: Date | null;
       expiresAt: Date;
     }>
   >(
-    `SELECT label, description, "requestedByEmail", "publicKeyJwk", "mlkemPublicKey",
+    `SELECT label, description, "requestedByEmail", "publicKeyJwk",
             "submittedAt", "revokedAt", "expiresAt"
      FROM "client_${tenantSlug}"."SecretRequest"
      WHERE "tokenHash" = $1
@@ -62,7 +61,6 @@ export async function GET(_req: Request, { params }: Params) {
     description: sr.description,
     requestedByEmail: sr.requestedByEmail,
     publicKeyJwk: sr.publicKeyJwk,
-    mlkemPublicKey: sr.mlkemPublicKey,
     expiresAt: sr.expiresAt,
   });
 }

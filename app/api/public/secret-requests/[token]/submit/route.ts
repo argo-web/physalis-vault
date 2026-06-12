@@ -28,9 +28,6 @@ type Body = {
   ciphertext?: string;
   iv?: string;
   ephemeralPublicJwk?: string;
-  // Volet hybride post-quantique (optionnel — legacy = ECDH seul).
-  mlkemCiphertext?: string;
-  hybridVersion?: number;
 };
 
 export async function POST(req: Request, { params }: Params) {
@@ -66,23 +63,6 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Payload too large" }, { status: 413 });
   }
 
-  // Volet hybride : si hybridVersion=1, le ciphertext ML-KEM est requis et
-  // de taille bornée (ML-KEM-768 = 1088 bytes → ~1452 chars base64).
-  const isHybrid = body.hybridVersion === 1;
-  if (isHybrid) {
-    if (typeof body.mlkemCiphertext !== "string") {
-      return NextResponse.json(
-        { error: "mlkemCiphertext required for hybridVersion 1" },
-        { status: 400 },
-      );
-    }
-    if (body.mlkemCiphertext.length > 4_000) {
-      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
-    }
-  }
-  const mlkemCiphertext = isHybrid ? body.mlkemCiphertext! : null;
-  const hybridVersion = isHybrid ? 1 : null;
-
   const tenantSlug = await resolveSecretRequestTenantSlug(token);
   if (!tenantSlug || !isValidClientSlug(tenantSlug)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -100,19 +80,15 @@ export async function POST(req: Request, { params }: Params) {
      SET "encryptedSecret" = $1,
          "secretIv" = $2,
          "ephemeralPublicKey" = $3,
-         "mlkemCiphertext" = $4,
-         "hybridVersion" = $5,
          "submittedAt" = NOW(),
-         "submitterIp" = $6
-     WHERE "tokenHash" = $7
+         "submitterIp" = $4
+     WHERE "tokenHash" = $5
        AND "revokedAt" IS NULL
        AND "submittedAt" IS NULL
        AND "expiresAt" > NOW()`,
     body.ciphertext,
     body.iv,
     body.ephemeralPublicJwk,
-    mlkemCiphertext,
-    hybridVersion,
     submitterIp,
     tokenHash,
   );
