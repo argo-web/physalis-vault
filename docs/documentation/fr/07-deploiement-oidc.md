@@ -124,7 +124,7 @@ du body de la requête correspond.
 
 ## 4. Le workflow modèle
 
-Copiez [docs/deploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/deploy.modele.yml)
+Copiez [docs/deploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.modele.yml)
 dans `.github/workflows/deploy.yml` de votre repo. Adaptez les variables
 en haut :
 
@@ -234,7 +234,7 @@ l'écrit sur le VPS et redémarre les containers via `docker compose up -d`.
 C'est suffisant pour les secrets chargés au runtime (variables d'environnement,
 clés passées via `.env`).
 
-Copiez [docs/redeploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/redeploy.modele.yml)
+Copiez [docs/redeploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/redeploy.modele.yml)
 dans `.github/workflows/redeploy.yml` de votre repo et adaptez les variables
 en haut du fichier.
 

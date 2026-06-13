@@ -120,7 +120,7 @@ in the request body matches.
 
 ## 4. The template workflow
 
-Copy [docs/deploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/deploy.modele.yml)
+Copy [docs/deploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.modele.yml)
 into `.github/workflows/deploy.yml` in your repo. Adapt the variables
 at the top:
 
@@ -229,7 +229,7 @@ writes it to the VPS, and restarts the containers via `docker compose up -d`.
 This is sufficient for secrets loaded at runtime (environment variables,
 keys passed via `.env`).
 
-Copy [docs/redeploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/redeploy.modele.yml)
+Copy [docs/redeploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/redeploy.modele.yml)
 into `.github/workflows/redeploy.yml` in your repo and adapt the variables
 at the top of the file.
 

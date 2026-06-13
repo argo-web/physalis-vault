@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/argo-web/physalis-vault:latest
+    image: ghcr.io/physalis-cloud/physalis:latest
     container_name: physalis
     restart: unless-stopped
     env_file: .env

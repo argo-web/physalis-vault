@@ -120,7 +120,7 @@ del cuerpo de la petición también coincide.
 
 ## 4. El workflow plantilla
 
-Copia [docs/deploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/deploy.modele.yml)
+Copia [docs/deploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.modele.yml)
 en `.github/workflows/deploy.yml` de tu repositorio. Adapta las variables
 al inicio:
 
@@ -229,7 +229,7 @@ lo escribe en el VPS y reinicia los contenedores con `docker compose up -d`.
 Esto es suficiente para secretos cargados en tiempo de ejecución (variables de entorno,
 claves pasadas mediante `.env`).
 
-Copia [docs/redeploy.modele.yml](https://github.com/argo-web/physalis-vault/blob/main/docs/redeploy.modele.yml)
+Copia [docs/redeploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/redeploy.modele.yml)
 en `.github/workflows/redeploy.yml` de tu repositorio y adapta las variables
 al inicio del archivo.
 
