@@ -3,7 +3,7 @@
 // Phase 11a — UI gestion des UserToken.
 //
 // Tokens user-scoped pour intégrations N8n / Make / scripts (READ only V1).
-// Affichés dans /settings/security à côté des sessions plugin.
+// Affichés dans /settings/parameters à côté des sessions plugin.
 //
 // UX :
 //   - Liste les tokens actifs/révoqués (préfixe + nom + dates)
@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { RiKey2Line } from "@remixicon/react";
+import { useTranslations } from "next-intl";
 
 type UserToken = {
   id: string;
@@ -24,14 +25,16 @@ type UserToken = {
   createdAt: string;
 };
 
-const EXPIRY_OPTIONS: Array<{ label: string; days: number | null }> = [
-  { label: "Jamais", days: null },
-  { label: "30 jours", days: 30 },
-  { label: "90 jours", days: 90 },
-  { label: "1 an (365 j)", days: 365 },
-];
-
 export default function UserTokensPanel() {
+  const t = useTranslations("settings.security.userTokens");
+
+  const EXPIRY_OPTIONS: Array<{ label: string; days: number | null }> = [
+    { label: t("expiry.never"), days: null },
+    { label: t("expiry.30days"), days: 30 },
+    { label: t("expiry.90days"), days: 90 },
+    { label: t("expiry.1year"), days: 365 },
+  ];
+
   const [tokens, setTokens] = useState<UserToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -44,7 +47,7 @@ export default function UserTokensPanel() {
     setError(null);
     const res = await fetch("/api/user-tokens");
     if (!res.ok) {
-      setError("Erreur de chargement.");
+      setError(t("loadError"));
       return;
     }
     const data = (await res.json()) as { tokens: UserToken[] };
@@ -55,36 +58,41 @@ export default function UserTokensPanel() {
     reload();
   }, [reload]);
 
-  async function revoke(t: UserToken) {
-    if (!confirm(`Révoquer le token « ${t.name} » ? Toutes les intégrations qui l'utilisent vont arrêter de fonctionner.`)) {
+  async function revoke(tok: UserToken) {
+    if (!confirm(t("revokeConfirm", { name: tok.name }))) {
       return;
     }
-    const res = await fetch(`/api/user-tokens/${t.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/user-tokens/${tok.id}`, { method: "DELETE" });
     if (!res.ok) {
-      setError("Révocation impossible.");
+      setError(t("revokeError"));
       return;
     }
     reload();
   }
 
-  function isActive(t: UserToken): boolean {
-    if (t.revokedAt) return false;
-    if (t.expiresAt && new Date(t.expiresAt).getTime() < Date.now()) return false;
+  function isActive(tok: UserToken): boolean {
+    if (tok.revokedAt) return false;
+    if (tok.expiresAt && new Date(tok.expiresAt).getTime() < Date.now()) return false;
     return true;
   }
 
   return (
-    <section className="settings-section">
-      <h2 className="settings-section-title">Tokens d&apos;intégration</h2>
-      <p className="settings-section-desc">
-        Tokens Bearer scopés à ton compte, à utiliser dans des workflows
-        N8n / Make ou des scripts custom. Donnent accès en{" "}
-        <strong>lecture</strong> aux secrets, services et comptes des projets
-        dont tu es membre. Différents des{" "}
-        <em>machine tokens</em> (scopés à un projet+env précis dans les
-        paramètres d&apos;un projet).
-      </p>
+    <section className="settings-block">
+      <div className="settings-block-row" style={{ marginBottom: 10 }}>
+        <h2 className="settings-block-title" style={{ margin: 0 }}>{t("title")}</h2>
+        {!creating && !justCreated && (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="btn btn-primary btn-sm"
+          >
+            {t("createBtn")}
+          </button>
+        )}
+      </div>
+      <p className="settings-section-desc">{t("desc")}</p>
 
+      <div className="settings-block-card">
       {error && <p className="error-text">{error}</p>}
 
       {justCreated && (
@@ -98,11 +106,10 @@ export default function UserTokensPanel() {
           }}
         >
           <div className="row-name" style={{ marginBottom: 6 }}>
-            ✓ Token « {justCreated.name} » créé
+            {t("created", { name: justCreated.name })}
           </div>
           <p className="help" style={{ marginBottom: 8 }}>
-            Copie ce token <strong>maintenant</strong>. Il ne sera plus
-            jamais affiché ensuite.
+            {t("saveNow")}
           </p>
           <div
             style={{
@@ -131,29 +138,16 @@ export default function UserTokensPanel() {
               }}
               className="btn btn-primary btn-sm"
             >
-              Copier
+              {t("copyBtn")}
             </button>
             <button
               type="button"
               onClick={() => setJustCreated(null)}
               className="btn btn-ghost btn-sm"
-              title="J'ai bien copié le token"
             >
-              ✓ Fait
+              {t("doneBtn")}
             </button>
           </div>
-        </div>
-      )}
-
-      {!creating && !justCreated && (
-        <div style={{ marginBottom: 12 }}>
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="btn btn-primary btn-sm"
-          >
-            + Créer un token
-          </button>
         </div>
       )}
 
@@ -169,21 +163,21 @@ export default function UserTokensPanel() {
       )}
 
       {tokens === null ? (
-        <p className="help">Chargement…</p>
+        <p className="help">{t("loading")}</p>
       ) : tokens.length === 0 ? (
-        <p className="help">Aucun token. Crée-en un pour intégrer un workflow N8n / Make.</p>
+        <p className="help">{t("noTokens")}</p>
       ) : (
         <div className="row-list">
-          {tokens.map((t) => {
-            const active = isActive(t);
+          {tokens.map((tok) => {
+            const active = isActive(tok);
             return (
-              <div key={t.id} className="row" style={{ opacity: active ? 1 : 0.55 }}>
+              <div key={tok.id} className="row" style={{ opacity: active ? 1 : 0.55 }}>
                 <div className="row-icon"><RiKey2Line size={18} aria-hidden /></div>
                 <div className="row-info">
                   <div className="row-name">
-                    {t.name}{" "}
+                    {tok.name}{" "}
                     <code className="code-mono" style={{ fontSize: 11, marginLeft: 6 }}>
-                      {t.prefix}…
+                      {tok.prefix}…
                     </code>
                     {!active && (
                       <span
@@ -195,22 +189,22 @@ export default function UserTokensPanel() {
                           color: "#ef4444",
                         }}
                       >
-                        {t.revokedAt ? "révoqué" : "expiré"}
+                        {tok.revokedAt ? t("status.revoked") : t("status.expired")}
                       </span>
                     )}
                   </div>
                   <div className="row-meta">
-                    <span title={new Date(t.createdAt).toLocaleString()}>
-                      Créé {relativeTime(t.createdAt)}
+                    <span title={new Date(tok.createdAt).toLocaleString()}>
+                      {t("createdAt", { time: relativeTime(tok.createdAt, t) })}
                     </span>
-                    {t.lastUsedAt && (
-                      <span title={new Date(t.lastUsedAt).toLocaleString()}>
-                        · Dernier usage {relativeTime(t.lastUsedAt)}
+                    {tok.lastUsedAt && (
+                      <span title={new Date(tok.lastUsedAt).toLocaleString()}>
+                        · {t("lastUsed", { time: relativeTime(tok.lastUsedAt, t) })}
                       </span>
                     )}
-                    {t.expiresAt && (
-                      <span title={new Date(t.expiresAt).toLocaleString()}>
-                        · Expire {relativeTime(t.expiresAt)}
+                    {tok.expiresAt && (
+                      <span title={new Date(tok.expiresAt).toLocaleString()}>
+                        · {t("expires", { time: relativeTime(tok.expiresAt, t) })}
                       </span>
                     )}
                   </div>
@@ -219,10 +213,10 @@ export default function UserTokensPanel() {
                   <div className="row-actions">
                     <button
                       type="button"
-                      onClick={() => revoke(t)}
+                      onClick={() => revoke(tok)}
                       className="btn btn-danger btn-xs"
                     >
-                      Révoquer
+                      {t("revokeBtn")}
                     </button>
                   </div>
                 )}
@@ -231,6 +225,7 @@ export default function UserTokensPanel() {
           })}
         </div>
       )}
+      </div>
     </section>
   );
 }
@@ -242,10 +237,18 @@ function CreateForm({
   onCancel: () => void;
   onCreated: (token: string, name: string) => void;
 }) {
+  const t = useTranslations("settings.security.userTokens");
   const [name, setName] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<number | null>(90);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const EXPIRY_OPTIONS: Array<{ label: string; days: number | null }> = [
+    { label: t("expiry.never"), days: null },
+    { label: t("expiry.30days"), days: 30 },
+    { label: t("expiry.90days"), days: 90 },
+    { label: t("expiry.1year"), days: 365 },
+  ];
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -261,7 +264,7 @@ function CreateForm({
         | { token?: string; error?: string }
         | null;
       if (!res.ok || !data?.token) {
-        setError(data?.error ?? "Création impossible.");
+        setError(data?.error ?? t("createError"));
         return;
       }
       onCreated(data.token, name.trim());
@@ -272,7 +275,7 @@ function CreateForm({
     <form onSubmit={submit} className="card" style={{ padding: 14, marginBottom: 12 }}>
       <div className="form-row">
         <div className="field" style={{ minWidth: 240, flex: 1 }}>
-          <label>Nom *</label>
+          <label>{t("nameLabel")}</label>
           <input
             autoFocus
             value={name}
@@ -284,7 +287,7 @@ function CreateForm({
           />
         </div>
         <div className="field" style={{ minWidth: 180 }}>
-          <label>Expiration</label>
+          <label>{t("expiryLabel")}</label>
           <select
             value={expiresInDays === null ? "never" : String(expiresInDays)}
             onChange={(e) =>
@@ -310,7 +313,7 @@ function CreateForm({
           disabled={pending || !name.trim()}
           className="btn btn-primary btn-sm"
         >
-          {pending ? "Création…" : "Créer le token"}
+          {t("createBtn")}
         </button>
         <button
           type="button"
@@ -318,29 +321,32 @@ function CreateForm({
           className="btn btn-ghost btn-sm"
           disabled={pending}
         >
-          Annuler
+          {t("cancelBtn")}
         </button>
       </div>
     </form>
   );
 }
 
-function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const diff = t - Date.now();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TFunc = (key: string, values?: any) => string;
+
+function relativeTime(iso: string, t: TFunc): string {
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+  const diff = ms - Date.now();
   const abs = Math.abs(diff);
   const future = diff > 0;
   const sec = Math.floor(abs / 1000);
-  if (sec < 60) return future ? "dans quelques sec" : "à l'instant";
+  if (sec < 60) return future ? t("relTime.inSeconds") : t("relTime.justNow");
   const min = Math.floor(sec / 60);
-  if (min < 60) return future ? `dans ${min} min` : `il y a ${min} min`;
+  if (min < 60) return future ? t("relTime.inMinutes", { n: min }) : t("relTime.minutesAgo", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return future ? `dans ${hr} h` : `il y a ${hr} h`;
+  if (hr < 24) return future ? t("relTime.inHours", { n: hr }) : t("relTime.hoursAgo", { n: hr });
   const day = Math.floor(hr / 24);
-  if (day < 30) return future ? `dans ${day} j` : `il y a ${day} j`;
+  if (day < 30) return future ? t("relTime.inDays", { n: day }) : t("relTime.daysAgo", { n: day });
   const month = Math.floor(day / 30);
-  if (month < 12) return future ? `dans ${month} mois` : `il y a ${month} mois`;
+  if (month < 12) return future ? t("relTime.inMonths", { n: month }) : t("relTime.monthsAgo", { n: month });
   const year = Math.floor(day / 365);
-  return future ? `dans ${year} an${year > 1 ? "s" : ""}` : `il y a ${year} an${year > 1 ? "s" : ""}`;
+  return future ? t("relTime.inYears", { n: year }) : t("relTime.yearsAgo", { n: year });
 }

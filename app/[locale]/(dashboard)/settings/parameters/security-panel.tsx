@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Image from "next/image";
+import { useTranslations } from "next-intl";
 
 type SetupData = {
   secret: string;
@@ -18,6 +19,7 @@ export default function SecurityPanel({
   initialEnabled: boolean;
   initialBackupCount: number;
 }) {
+  const t = useTranslations("settings.security.twoFactor");
   const [enabled, setEnabled] = useState(initialEnabled);
   const [backupCount, setBackupCount] = useState(initialBackupCount);
   const [step, setStep] = useState<Step>("idle");
@@ -43,7 +45,7 @@ export default function SecurityPanel({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Setup impossible.");
+        setError(data?.error ?? t("setupError"));
         return;
       }
       setSetupData((await res.json()) as SetupData);
@@ -64,7 +66,7 @@ export default function SecurityPanel({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Code invalide.");
+        setError(data?.error ?? t("codeInvalid"));
         return;
       }
       const data = (await res.json()) as { backupCodes: string[] };
@@ -90,7 +92,7 @@ export default function SecurityPanel({
         const data = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setError(data?.error ?? "Désactivation impossible.");
+        setError(data?.error ?? t("disableError"));
         return;
       }
       setEnabled(false);
@@ -108,20 +110,14 @@ export default function SecurityPanel({
 
   if (step === "backup-codes" && backupCodes) {
     return (
-      <section
-        className="settings-section"
-        style={{
-          background: "var(--accent-bg)",
-          borderColor: "var(--accent-soft)",
-        }}
-      >
-        <h2 className="settings-section-title">
-          ✅ 2FA activée — sauvegardez ces codes
-        </h2>
+      <section className="settings-block">
+        <h2 className="settings-block-title">{t("backupCodesTitle")}</h2>
+        <div
+          className="settings-block-card"
+          style={{ background: "var(--accent-bg)", borderColor: "var(--accent-soft)" }}
+        >
         <p className="settings-section-desc">
-          Ces 8 codes de secours ne seront <strong>plus jamais affichés</strong>
-          . Chaque code est utilisable <strong>une seule fois</strong> en
-          remplacement d&apos;un code TOTP (si vous perdez votre téléphone).
+          {t.rich("backupCodesHint", { strong: (c) => <strong>{c}</strong> })}
         </p>
         <div
           style={{
@@ -153,56 +149,57 @@ export default function SecurityPanel({
             onClick={copyAll}
             className="btn btn-primary btn-sm"
           >
-            Copier tout
+            {t("backupCodesCopy")}
           </button>
           <button
             type="button"
             onClick={reset}
             className="btn btn-ghost btn-sm"
           >
-            J&apos;ai sauvegardé les codes
+            {t("backupCodesSaved")}
           </button>
+        </div>
         </div>
       </section>
     );
   }
 
   return (
-    <section className="settings-section">
-      <h2 className="settings-section-title">
-        Authentification à deux facteurs (TOTP)
-      </h2>
-      <p className="settings-section-desc">
-        {enabled ? (
-          <>
-            ✅ Activée. {backupCount} code{backupCount > 1 ? "s" : ""} de secours
-            restant{backupCount > 1 ? "s" : ""}.
-          </>
-        ) : (
-          <>
-            Ajoute un 2e facteur (Google Authenticator, Authy, 1Password…) en
-            plus du mot de passe pour la connexion web. Les machine tokens ne
-            sont pas affectés.
-          </>
+    <section className="settings-block">
+      <h2 className="settings-block-title">{t("title")}</h2>
+      <div className="settings-block-card flex flex-col gap-3">
+        {/* État + action principale (alignée à droite) */}
+        {step === "idle" && (
+          <div className="settings-block-row">
+            <p className="help" style={{ margin: 0 }}>
+              {enabled ? t("enabled", { count: backupCount }) : t("disabled")}
+            </p>
+            {enabled ? (
+              <button
+                type="button"
+                onClick={() => setStep("disable")}
+                className="btn btn-danger btn-sm"
+              >
+                {t("disableBtn")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startSetup}
+                disabled={pending}
+                className="btn btn-primary btn-sm"
+              >
+                {pending ? "..." : t("enableBtn")}
+              </button>
+            )}
+          </div>
         )}
-      </p>
-
-      {!enabled && step === "idle" && (
-        <button
-          type="button"
-          onClick={startSetup}
-          disabled={pending}
-          className="btn btn-primary btn-sm"
-        >
-          {pending ? "..." : "Activer la 2FA"}
-        </button>
-      )}
 
       {!enabled && step === "setup" && setupData && (
         <div className="flex flex-col gap-4">
           <div>
             <p className="text-sm" style={{ fontWeight: 500 }}>
-              1. Scannez le QR code avec votre app authenticator
+              {t("step1")}
             </p>
             <div
               style={{
@@ -216,21 +213,20 @@ export default function SecurityPanel({
             >
               <Image
                 src={setupData.qrDataUrl}
-                alt="QR code 2FA"
+                alt={t("qrCodeAlt")}
                 width={200}
                 height={200}
                 unoptimized
               />
             </div>
             <p className="help" style={{ marginTop: 8 }}>
-              Ou saisie manuelle du secret :{" "}
+              {t("manualSecret")}{" "}
               <code className="code-mono select-all">{setupData.secret}</code>
             </p>
           </div>
           <form onSubmit={verifySetup} className="flex flex-col gap-2">
             <label className="text-sm">
-              2. Saisissez le code à 6 chiffres affiché par votre app pour
-              confirmer :
+              {t("step2")}
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -252,14 +248,14 @@ export default function SecurityPanel({
                 disabled={pending || code.length !== 6}
                 className="btn btn-primary btn-sm"
               >
-                {pending ? "..." : "Confirmer"}
+                {pending ? "..." : t("confirmBtn")}
               </button>
               <button
                 type="button"
                 onClick={reset}
                 className="btn btn-ghost btn-sm"
               >
-                Annuler
+                {t("cancelBtn")}
               </button>
             </div>
             {error && <p className="error-text">{error}</p>}
@@ -267,21 +263,10 @@ export default function SecurityPanel({
         </div>
       )}
 
-      {enabled && step === "idle" && (
-        <button
-          type="button"
-          onClick={() => setStep("disable")}
-          className="btn btn-danger btn-sm"
-        >
-          Désactiver la 2FA
-        </button>
-      )}
-
       {enabled && step === "disable" && (
         <form onSubmit={disable} className="flex flex-col gap-2">
           <p className="text-sm">
-            Pour désactiver, saisissez un code TOTP courant ou un code de
-            secours :
+            {t("disablePrompt")}
           </p>
           <div className="flex items-center gap-2">
             <input
@@ -289,7 +274,7 @@ export default function SecurityPanel({
               autoFocus
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="123456 ou code de secours"
+              placeholder="123456"
               className="input input-mono"
               style={{ maxWidth: 260 }}
             />
@@ -298,19 +283,20 @@ export default function SecurityPanel({
               disabled={pending || !code}
               className="btn btn-danger btn-sm"
             >
-              {pending ? "..." : "Désactiver"}
+              {pending ? "..." : t("disableBtn")}
             </button>
             <button
               type="button"
               onClick={reset}
               className="btn btn-ghost btn-sm"
             >
-              Annuler
+              {t("cancelBtn")}
             </button>
           </div>
           {error && <p className="error-text">{error}</p>}
         </form>
       )}
+      </div>
     </section>
   );
 }

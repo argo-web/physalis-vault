@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { getTranslations } from "next-intl/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import SecurityPanel from "./security-panel";
@@ -9,6 +10,8 @@ import pkg from "@/package.json";
 export default async function SecurityPage() {
   const session = await auth();
   if (!session?.user?.id) return null;
+
+  const t = await getTranslations("settings.security");
 
   const me = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -24,11 +27,11 @@ export default async function SecurityPage() {
     <div className="page">
       <div className="page-content">
         <div className="breadcrumb">
-          <Link href="/dashboard">← Tableau de bord</Link>
+          <Link href="/dashboard">← {t("pageTitle")}</Link>
         </div>
         <div className="page-header">
           <div>
-            <h1 className="page-title">Sécurité</h1>
+            <h1 className="page-title">{t("pageTitle")}</h1>
             <div className="page-subtitle">{me.email}</div>
           </div>
         </div>
@@ -41,7 +44,7 @@ export default async function SecurityPage() {
           <UserTokensPanel />
           <PluginSessionsPanel />
           <div className="settings-section" style={{ padding: "12px 16px" }}>
-            <span className="row-meta code-mono">Physalis v{pkg.version}</span>
+            <span className="row-meta code-mono">{t("versionInfo", { version: pkg.version })}</span>
           </div>
         </div>
       </div>

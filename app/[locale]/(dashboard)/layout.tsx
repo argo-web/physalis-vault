@@ -84,7 +84,7 @@ export default async function DashboardLayout({
             </button>
           </form>
           <Link
-            href={`/${locale}/settings/security`}
+            href={`/${locale}/account`}
             className="user-link"
             style={{ display: "inline-flex", alignItems: "center" }}
             title={`${t("myAccount")} : ${email}`}
