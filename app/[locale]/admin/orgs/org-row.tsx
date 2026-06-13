@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { useTranslations } from "next-intl";
 import { deleteOrg } from "./actions";
 
 type OrgData = {
@@ -18,16 +19,11 @@ export default function OrgRow({
   org: OrgData;
   isLast: boolean;
 }) {
+  const t = useTranslations("admin.orgs");
   const [pending, startTransition] = useTransition();
 
   function handleDelete() {
-    if (
-      !confirm(
-        `Supprimer l'organisation "${org.name}" (${org.slug}) ?\n` +
-        `Cela supprimera également tous ses projets, secrets et membres. Action irréversible.`,
-      )
-    )
-      return;
+    if (!confirm(t("deleteConfirm", { name: org.name, slug: org.slug }))) return;
     startTransition(() => deleteOrg(org.id));
   }
 
@@ -58,7 +54,7 @@ export default function OrgRow({
           className="btn btn-sm"
           style={{ color: "var(--danger)", border: "1px solid var(--danger)" }}
         >
-          Supprimer
+          {t("delete")}
         </button>
       </td>
     </tr>

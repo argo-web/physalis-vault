@@ -1,7 +1,9 @@
+import { getTranslations } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import OrgRow from "./org-row";
 
 export default async function AdminOrgsPage() {
+  const t = await getTranslations("admin.orgs");
   const orgs = await prisma.organization.findMany({
     orderBy: { createdAt: "asc" },
     select: {
@@ -18,8 +20,8 @@ export default async function AdminOrgsPage() {
       <div className="page-content">
         <div className="page-header">
           <div>
-            <h1 className="page-title">Organisations</h1>
-            <div className="page-subtitle">{orgs.length} organisation{orgs.length > 1 ? "s" : ""}</div>
+            <h1 className="page-title">{t("title")}</h1>
+            <div className="page-subtitle">{t("count", { count: orgs.length })}</div>
           </div>
         </div>
 
@@ -27,9 +29,9 @@ export default async function AdminOrgsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                {["Nom", "Slug", "Membres", "Projets", "Créée le", ""].map((h) => (
+                {[t("colName"), t("colSlug"), t("colMembers"), t("colProjects"), t("colCreatedAt"), ""].map((h, i) => (
                   <th
-                    key={h}
+                    key={i}
                     style={{
                       padding: "10px 16px",
                       textAlign: "left",

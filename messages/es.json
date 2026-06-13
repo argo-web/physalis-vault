@@ -1819,5 +1819,36 @@
     "sendSecurely": "Enviar de forma segura",
     "encryptionNotice": "🔐 Tu secreto se cifra en tu navegador antes de transmitirse. Physalis no puede leerlo.",
     "expiresOn": "Este enlace caduca el {date}."
+  },
+  "admin": {
+    "layout": {
+      "brandSuffix": "admin",
+      "navUsers": "Usuarios",
+      "navOrgs": "Organizaciones",
+      "backToDashboard": "← Panel",
+      "signOut": "Cerrar sesión"
+    },
+    "users": {
+      "title": "Usuarios",
+      "count": "{count, plural, one {# usuario} other {# usuarios}}",
+      "colEmail": "Correo",
+      "colRole": "Rol",
+      "colOrgs": "Orgs",
+      "colCreatedAt": "Creado el",
+      "self": "(tú)",
+      "delete": "Eliminar",
+      "deleteConfirm": "¿Eliminar al usuario {email}? Esta acción es irreversible."
+    },
+    "orgs": {
+      "title": "Organizaciones",
+      "count": "{count, plural, one {# organización} other {# organizaciones}}",
+      "colName": "Nombre",
+      "colSlug": "Slug",
+      "colMembers": "Miembros",
+      "colProjects": "Proyectos",
+      "colCreatedAt": "Creada el",
+      "delete": "Eliminar",
+      "deleteConfirm": "¿Eliminar la organización \"{name}\" ({slug})?\nEsto también eliminará todos sus proyectos, secretos y miembros. Acción irreversible."
+    }
   }
 }

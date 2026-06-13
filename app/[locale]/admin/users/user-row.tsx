@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { useTranslations } from "next-intl";
 import type { Role } from "@prisma/client";
 import { changeUserRole, deleteUser } from "./actions";
 
@@ -29,6 +30,7 @@ export default function UserRow({
   isSelf: boolean;
   isLast: boolean;
 }) {
+  const t = useTranslations("admin.users");
   const [pending, startTransition] = useTransition();
 
   function handleRoleChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -37,7 +39,7 @@ export default function UserRow({
   }
 
   function handleDelete() {
-    if (!confirm(`Supprimer l'utilisateur ${user.email} ? Cette action est irréversible.`)) return;
+    if (!confirm(t("deleteConfirm", { email: user.email }))) return;
     startTransition(() => deleteUser(user.id));
   }
 
@@ -51,7 +53,7 @@ export default function UserRow({
       <td style={{ padding: "12px 16px", fontSize: 14 }}>
         {user.email}
         {isSelf && (
-          <span className="help" style={{ marginLeft: 6, fontSize: 11 }}>(vous)</span>
+          <span className="help" style={{ marginLeft: 6, fontSize: 11 }}>{t("self")}</span>
         )}
       </td>
       <td style={{ padding: "12px 16px" }}>
@@ -90,7 +92,7 @@ export default function UserRow({
             className="btn btn-sm"
             style={{ color: "var(--danger)", border: "1px solid var(--danger)" }}
           >
-            Supprimer
+            {t("delete")}
           </button>
         )}
       </td>

@@ -1819,5 +1819,36 @@
     "sendSecurely": "Envoyer de façon sécurisée",
     "encryptionNotice": "🔐 Votre secret est chiffré dans votre navigateur avant transmission. Physalis ne peut pas le lire.",
     "expiresOn": "Ce lien expire le {date}."
+  },
+  "admin": {
+    "layout": {
+      "brandSuffix": "admin",
+      "navUsers": "Utilisateurs",
+      "navOrgs": "Organisations",
+      "backToDashboard": "← Dashboard",
+      "signOut": "Déconnexion"
+    },
+    "users": {
+      "title": "Utilisateurs",
+      "count": "{count, plural, one {# utilisateur} other {# utilisateurs}}",
+      "colEmail": "Email",
+      "colRole": "Rôle",
+      "colOrgs": "Orgs",
+      "colCreatedAt": "Créé le",
+      "self": "(vous)",
+      "delete": "Supprimer",
+      "deleteConfirm": "Supprimer l'utilisateur {email} ? Cette action est irréversible."
+    },
+    "orgs": {
+      "title": "Organisations",
+      "count": "{count, plural, one {# organisation} other {# organisations}}",
+      "colName": "Nom",
+      "colSlug": "Slug",
+      "colMembers": "Membres",
+      "colProjects": "Projets",
+      "colCreatedAt": "Créée le",
+      "delete": "Supprimer",
+      "deleteConfirm": "Supprimer l'organisation \"{name}\" ({slug}) ?\nCela supprimera également tous ses projets, secrets et membres. Action irréversible."
+    }
   }
 }

@@ -1,8 +1,10 @@
+import { getTranslations } from "next-intl/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import UserRow from "./user-row";
 
 export default async function AdminUsersPage() {
+  const t = await getTranslations("admin.users");
   const session = await auth();
   const currentUserId = session!.user!.id;
 
@@ -22,8 +24,8 @@ export default async function AdminUsersPage() {
       <div className="page-content">
         <div className="page-header">
           <div>
-            <h1 className="page-title">Utilisateurs</h1>
-            <div className="page-subtitle">{users.length} utilisateur{users.length > 1 ? "s" : ""}</div>
+            <h1 className="page-title">{t("title")}</h1>
+            <div className="page-subtitle">{t("count", { count: users.length })}</div>
           </div>
         </div>
 
@@ -31,9 +33,9 @@ export default async function AdminUsersPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                {["Email", "Rôle", "Orgs", "Créé le", ""].map((h) => (
+                {[t("colEmail"), t("colRole"), t("colOrgs"), t("colCreatedAt"), ""].map((h, i) => (
                   <th
-                    key={h}
+                    key={i}
                     style={{
                       padding: "10px 16px",
                       textAlign: "left",
