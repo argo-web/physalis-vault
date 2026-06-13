@@ -1,13 +1,10 @@
-> **⚠️ Pré-release — version 0.6.1**
+> **Version 1.0.0**
 >
-> Ce repo de self-host est en **cours de test** et n'a pas encore été
-> validé en production. L'API, le schéma de base de données et le flux
-> d'installation peuvent encore évoluer sans préavis.
+> Première version stable du repo self-host de Physalis. L'API, le schéma de
+> base de données et le flux d'installation suivent désormais le versioning
+> sémantique : les changements cassants passeront par une version majeure.
 >
-> À utiliser pour **évaluer le produit** ; pas encore recommandé pour
-> stocker des secrets critiques.
->
-> Pour la version stable hébergée : [physalis.cloud](https://physalis.cloud).
+> Pour la version hébergée et gérée : [physalis.cloud](https://physalis.cloud).
 > Bugs / feedback bienvenus : [github.com/physalis-cloud/physalis/issues](https://github.com/physalis-cloud/physalis/issues).
 
 ---
