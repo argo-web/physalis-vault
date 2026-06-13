@@ -75,7 +75,9 @@ export async function resetPassword(
     }
     await prisma.user.update({
       where: { id: user.id },
-      data: { password: hash },
+      // #5 — invalidation de session : couper toutes les sessions émises avant
+      // le reset (requireUser compare loginAt à sessionsValidFrom).
+      data: { password: hash, sessionsValidFrom: new Date() },
     });
   } catch (err) {
     console.error("[reset-password] update failed:", err);
