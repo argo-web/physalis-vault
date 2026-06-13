@@ -8,7 +8,7 @@
 > stocker des secrets critiques.
 >
 > Pour la version stable hébergée : [physalis.cloud](https://physalis.cloud).
-> Bugs / feedback bienvenus : [github.com/argo-web/physalis-vault/issues](https://github.com/argo-web/physalis-vault/issues).
+> Bugs / feedback bienvenus : [github.com/physalis-cloud/physalis/issues](https://github.com/physalis-cloud/physalis/issues).
 
 ---
 
