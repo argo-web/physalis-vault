@@ -58,7 +58,6 @@ export async function POST(req: Request, { params }: Params) {
 
   const body = (await readJson(req)) as
     | {
-        repo?: string;
         workflow?: string;
         branch?: string;
         environment?: string;
@@ -68,14 +67,20 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const repo = String(body.repo ?? "").trim();
+  // Le repo n'est plus saisi par policy : il est défini au niveau projet
+  // (Project.githubRepo) et partagé par toutes les policies. Source unique.
+  const project = await prisma.project.findUnique({
+    where: { id: access.project.id },
+    select: { githubRepo: true },
+  });
+  const repo = (project?.githubRepo ?? "").trim();
   const workflow = String(body.workflow ?? "").trim();
   const branch = String(body.branch ?? "").trim();
   const envName = String(body.environment ?? "").trim().toLowerCase();
 
   if (!isValidGithubRepo(repo)) {
     return NextResponse.json(
-      { error: "Repo invalide (format owner/repo attendu)" },
+      { error: "Définis d'abord le repo GitHub du projet (Paramètres)." },
       { status: 400 },
     );
   }

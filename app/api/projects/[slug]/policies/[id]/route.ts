@@ -5,7 +5,6 @@ import { logAction } from "@/lib/audit";
 
 type Params = { params: Promise<{ slug: string; id: string }> };
 
-const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const WORKFLOW_RE = /^[A-Za-z0-9._/ -]+\.ya?ml$/;
 const BRANCH_MAX = 200;
 const ENV_NAME_MAX = 100;
@@ -22,7 +21,6 @@ export async function PATCH(req: Request, { params }: Params) {
 
   const body = (await readJson(req)) as
     | {
-        repo?: string;
         workflow?: string;
         branch?: string;
         environment?: string;
@@ -32,7 +30,7 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const repo = typeof body.repo === "string" ? body.repo.trim() : undefined;
+  // Le repo n'est plus éditable par policy : il suit Project.githubRepo.
   const workflow =
     typeof body.workflow === "string" ? body.workflow.trim() : undefined;
   const branch =
@@ -40,12 +38,6 @@ export async function PATCH(req: Request, { params }: Params) {
   const envName =
     typeof body.environment === "string" ? body.environment.trim() : undefined;
 
-  if (repo !== undefined && !REPO_RE.test(repo)) {
-    return NextResponse.json(
-      { error: "repo invalide (format owner/repo)" },
-      { status: 400 },
-    );
-  }
   if (workflow !== undefined && !WORKFLOW_RE.test(workflow)) {
     return NextResponse.json(
       { error: "workflow invalide (fichier .yml/.yaml)" },
@@ -102,7 +94,7 @@ export async function PATCH(req: Request, { params }: Params) {
     newEnvName = newEnv.name;
   }
 
-  const newRepo = repo ?? existing.repo;
+  const newRepo = existing.repo;
   const newWorkflow = workflow ?? existing.workflow;
   const newBranch = branch ?? existing.branch;
 
