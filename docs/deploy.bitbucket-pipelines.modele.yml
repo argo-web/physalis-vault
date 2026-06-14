@@ -1,0 +1,100 @@
+# bitbucket-pipelines.yml
+#
+# Déploiement OIDC depuis Bitbucket Pipelines — équivalent Bitbucket de
+# deploy-oidc.yml.
+#
+# Aucun secret Bitbucket n'est utilisé. Le step active `oidc: true` : Bitbucket
+# expose alors un ID token OIDC dans $BITBUCKET_STEP_OIDC_TOKEN, que Physalis
+# valide contre une `Policy` avant de retourner le bundle de déploiement.
+#
+# ─── Pré-requis côté Physalis ────────────────────────────────────────────────
+#
+#   1. Connexion CI/CD (onglet org « CI/CD ») de provider « bitbucket » :
+#        - issuer (REQUIS) : l'URL OIDC du workspace, visible dans
+#          Workspace settings → OpenID Connect, de la forme
+#          https://api.bitbucket.org/2.0/workspaces/<ws>/pipelines-config/identity/oidc
+#        - (optionnel) creds registry
+#   2. Projet relié à cette connexion + repo = repositoryUuid Bitbucket
+#        (Repository settings → l'UUID entre accolades, ex. {11111111-...})
+#   3. Server (org) avec la clé SSH de la VPS + environnement lié + deployPath
+#   4. Policy : (provider bitbucket, repositoryUuid, deployment env, branche)
+#        → (project, environment Physalis). Le champ « environment CI » de la
+#        policy DOIT matcher le `deployment:` déclaré ci-dessous.
+#   5. Physalis accessible en HTTPS depuis Bitbucket Pipelines
+#
+# Note : Bitbucket ne permet pas (à ce jour) de configurer l'audience du token
+# OIDC — Physalis n'exige donc PAS d'audience pour Bitbucket ; le périmètre est
+# borné par l'issuer-workspace (allowlisté) + le repositoryUuid + la branche.
+#
+# ─── Variables à adapter (Repository variables ou ici) ───────────────────────
+#   VAULT_URL      : URL de Physalis (ex. https://vault.physalis.cloud)
+#   VAULT_PROJECT  : slug du projet dans le vault
+#   VAULT_ENV      : environnement cible Physalis (production, staging, ...)
+
+image: atlassian/default-image:4
+
+definitions:
+  steps:
+    - step: &deploy
+        name: Deploy
+        oidc: true
+        # `deployment` devient le claim OIDC `deploymentEnvironment` → doit
+        # matcher le champ « environment CI » de la Policy Physalis.
+        deployment: production
+        script:
+          - export VAULT_URL="${VAULT_URL:-https://vault.physalis.cloud}"
+          - export VAULT_PROJECT="${VAULT_PROJECT:-voyages}"
+          - export VAULT_ENV="${VAULT_ENV:-production}"
+          - apt-get update -qq && apt-get install -y -qq curl jq openssh-client
+          - set -eu
+          - umask 077
+          # ── 1. Bundle de déploiement ────────────────────────────────────
+          - |
+            response=$(curl -sf -X POST \
+              -H "Authorization: Bearer ${BITBUCKET_STEP_OIDC_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"project\":\"${VAULT_PROJECT}\",\"environment\":\"${VAULT_ENV}\"}" \
+              "${VAULT_URL}/api/deploy")
+            [ -n "$response" ] || { echo "ERROR: /api/deploy returned empty body"; exit 1; }
+            TMP="$(mktemp -d)"
+            printf '%s' "$response" > "$TMP/bundle.json"
+            jq -r '.sshKey' "$TMP/bundle.json" > "$TMP/id_deploy"
+            chmod 600 "$TMP/id_deploy"
+            jq -r '.secrets | to_entries[] | "\(.key)=\(.value)"' "$TMP/bundle.json" > "$TMP/.env"
+          # ── 2. Push + redeploy via SSH ──────────────────────────────────
+          - |
+            IP=$(jq -r '.serverIp'     "$TMP/bundle.json")
+            SSH_USER=$(jq -r '.serverUser'   "$TMP/bundle.json")
+            DPATH=$(jq -r '.deployPath'   "$TMP/bundle.json")
+            REGISTRY_URL=$(jq -r '.registry.url // empty'  "$TMP/bundle.json")
+            REGISTRY_USER=$(jq -r '.registry.user // empty' "$TMP/bundle.json")
+            REGISTRY_PAT=$(jq -r '.registry.pat // empty'  "$TMP/bundle.json")
+            SSH_OPTS="-i $TMP/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$TMP/known_hosts"
+            scp $SSH_OPTS "$TMP/.env" "$SSH_USER@$IP:$DPATH/.env.new"
+            HAS_COMPOSE=0
+            compose=$(jq -r '.dockerCompose // empty' "$TMP/bundle.json")
+            if [ -n "$compose" ]; then
+              printf '%s' "$compose" > "$TMP/docker-compose.yml"
+              scp $SSH_OPTS "$TMP/docker-compose.yml" "$SSH_USER@$IP:$DPATH/docker-compose.yml.new"
+              HAS_COMPOSE=1
+            fi
+            ssh $SSH_OPTS "$SSH_USER@$IP" \
+              "DEPLOY_DIR='$DPATH' HAS_COMPOSE='$HAS_COMPOSE' REGISTRY_URL='$REGISTRY_URL' REGISTRY_USER='$REGISTRY_USER' REGISTRY_PAT='$REGISTRY_PAT' bash -s" <<'ENDSSH'
+            set -eu
+            cd "$DEPLOY_DIR"
+            mv .env.new .env
+            [ "$HAS_COMPOSE" = "1" ] && mv docker-compose.yml.new docker-compose.yml || true
+            if [ -n "${REGISTRY_PAT:-}" ] && [ -n "${REGISTRY_USER:-}" ]; then
+              printf '%s' "$REGISTRY_PAT" | docker login "${REGISTRY_URL:-ghcr.io}" -u "$REGISTRY_USER" --password-stdin
+            fi
+            docker compose pull
+            docker compose up -d --no-build --remove-orphans
+            docker image prune -f
+            [ -n "${REGISTRY_URL:-}" ] && docker logout "$REGISTRY_URL" 2>/dev/null || true
+            ENDSSH
+          - rm -rf "$TMP"
+
+pipelines:
+  branches:
+    main:
+      - step: *deploy

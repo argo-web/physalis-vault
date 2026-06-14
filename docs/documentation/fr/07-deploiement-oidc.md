@@ -182,20 +182,31 @@ COPY --from=build /app/dist /usr/share/nginx/html
 > côté navigateur. À réserver aux URLs publiques, feature flags, etc.
 > Voir [Secrets & catégories](secrets) pour la convention complète.
 
-## 6. Variables réservées (`OrgSecret`)
+## 6. Connexions CI/CD (registry + redeploy)
 
-Pour que le workflow puisse pousser/pull sur un registre privé,
-configurez ces 3 OrgSecret au niveau organisation :
+Le provider CI, l'issuer OIDC et les credentials d'infra (token de redeploy,
+accès registre privé) vivent dans une **Connexion CI/CD** au niveau de
+l'organisation — onglet **« CI/CD »**. Chaque projet en sélectionne une dans ses
+Paramètres.
 
-| Clé             | Obligatoire ? | Défaut     |
-|-----------------|---------------|------------|
-| `REGISTRY_PAT`  | ✅            | —          |
-| `REGISTRY_USER` | ✅            | —          |
-| `REGISTRY_URL`  | facultatif    | `ghcr.io`  |
+Une connexion porte :
 
-Le bundle `/api/deploy` les inclut sous une clé `registry` séparée des
-`secrets[]` — elles ne polluent **pas** le `.env` du conteneur, elles
-servent uniquement au `docker login` distant.
+| Champ                | Rôle                                                       |
+|----------------------|------------------------------------------------------------|
+| Provider             | `github` \| `gitlab` \| `bitbucket`                        |
+| Issuer OIDC          | vide pour github.com / gitlab.com ; URL d'instance/workspace sinon |
+| Token de redeploy    | PAT pour le bouton « Redéployer » (dispatch)               |
+| Registry — URL       | défaut `ghcr.io`                                            |
+| Registry — user/token| pour `docker login` côté VPS (registre privé)              |
+
+Les creds registry sont renvoyés par `/api/deploy` sous une clé `registry`
+séparée des `secrets[]` — elles ne polluent **pas** le `.env` du conteneur,
+elles servent uniquement au `docker login` distant. Tout est chiffré
+(AES-256-GCM) et jamais réaffiché.
+
+> Migration : les anciens `OrgSecret` réservés (`GITHUB_DISPATCH_TOKEN`,
+> `REGISTRY_PAT/USER/URL`) sont automatiquement convertis en une connexion
+> « GitHub » lors de la mise à jour — rien à ressaisir.
 
 ## 7. Premier déploiement
 
@@ -214,7 +225,8 @@ diagnostiquable :
 | `reason`               | Cause probable                                                |
 |------------------------|---------------------------------------------------------------|
 | `wrong_audience`       | `VAULT_AUDIENCE` du workflow ≠ `OIDC_AUDIENCE` du Physalis    |
-| `wrong_issuer`         | Le token n'est pas signé par GitHub                            |
+| `wrong_issuer`         | Issuer du token inconnu / non supporté                         |
+| `untrusted_issuer`     | Issuer dynamique (GitLab self-hosted / Bitbucket) non enregistré dans une connexion |
 | `expired`              | Le job a tourné trop longtemps avant d'appeler `/api/deploy`   |
 | `policy_not_found`     | Aucune Policy ne matche `(repo, workflow, branch)`            |
 | `policy_match_failed`  | Policy trouvée mais `(project, env)` du body ne matche pas   |
@@ -223,9 +235,10 @@ diagnostiquable :
 ## Bouton « Redéployer » (workflow_dispatch)
 
 Si vous voulez piloter un redéploiement **depuis l'UI Physalis** sans
-push, configurez l'OrgSecret `GITHUB_DISPATCH_TOKEN` (un PAT avec scope
-`repo` ou un GitHub App token) et le bouton **« Redéployer »**
-apparaîtra sur chaque environnement.
+push, renseignez le **token de redeploy** sur la connexion CI/CD du projet
+(onglet org « CI/CD » — un PAT avec scope `repo` ou un GitHub App token) et
+le bouton **« Redéployer »** apparaîtra sur chaque environnement. (GitHub
+uniquement pour l'instant.)
 
 Au clic, Physalis appelle `POST /repos/{owner}/{repo}/actions/workflows/{wf}/dispatches`
 qui déclenche le workflow `redeploy.yml` sur la branche de l'environnement.
@@ -243,6 +256,41 @@ en haut du fichier.
 > suffit pas. Il faut déclencher le workflow de build complet (`deploy.yml`).
 > Physalis le gère automatiquement via l'option **« Build complet requis »**
 > dans la configuration de rotation du secret (voir [Rotation des secrets](rotations)).
+
+## GitLab CI/CD & Bitbucket Pipelines
+
+Le même `/api/deploy` accepte les tokens OIDC de **GitLab CI/CD** et
+**Bitbucket Pipelines**. Toute l'infra (Server, Environment, bundle SSH +
+secrets + compose) est identique — seuls le provider de la connexion, le
+format du repo et le déclencheur changent.
+
+**Mise en place :**
+
+1. Créez une **connexion CI/CD** (onglet org « CI/CD ») du bon provider :
+   - **GitLab** — issuer vide pour gitlab.com, ou l'URL de l'instance pour
+     self-hosted (ex. `https://gitlab.monentreprise.com`).
+   - **Bitbucket** — issuer = l'URL OIDC du workspace (Workspace settings →
+     OpenID Connect), **requis**.
+2. Reliez le projet à cette connexion et renseignez son **repo** :
+   - GitLab : le `project_path` (ex. `acme/web`, `acme/team/web`).
+   - Bitbucket : le `repositoryUuid` (Repository settings, entre accolades).
+3. Créez vos **Policies**. La 3e dimension n'est plus un fichier workflow
+   mais l'**environment CI** déclaré par le job :
+
+| Provider  | repo (policy)     | « workflow » (policy) = | branche       |
+|-----------|-------------------|-------------------------|---------------|
+| GitHub    | `owner/repo`      | fichier `*.yml`         | `ref`         |
+| GitLab    | `project_path`    | `environment: name:`    | `$CI_COMMIT_BRANCH` |
+| Bitbucket | `repositoryUuid`  | `deployment:`           | `branchName`  |
+
+4. Copiez le template adapté et adaptez les variables en tête :
+   - GitLab : [docs/deploy.gitlab-ci.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.gitlab-ci.modele.yml)
+   - Bitbucket : [docs/deploy.bitbucket-pipelines.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.bitbucket-pipelines.modele.yml)
+
+> **Audience** — GitHub & GitLab : l'`aud` du token doit matcher `OIDC_AUDIENCE`
+> du vault. Bitbucket ne permet pas de configurer l'`aud` : Physalis ne l'exige
+> donc pas pour ce provider ; le périmètre est borné par l'issuer-workspace
+> (enregistré dans la connexion) + le `repositoryUuid` + la branche.
 
 ## Aller plus loin
 
