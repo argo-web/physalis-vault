@@ -2,26 +2,33 @@
 title: Despliegue OIDC
 order: 7
 icon: RiCloudLine
-summary: Configura un servidor, una política y un workflow de GitHub Actions sin secretos almacenados.
+summary: Despliega desde GitHub Actions, GitLab CI/CD o Bitbucket Pipelines sin secretos almacenados, mediante tokens OIDC firmados por el proveedor CI.
 ---
 
 # Despliegue OIDC
 
-Physalis reemplaza los flujos antiguos de "PAT de GitHub almacenado + secretos de GitHub Actions"
-con autenticación **OIDC** (OpenID Connect) basada en **tokens
-firmados por el propio GitHub**.
+Physalis reemplaza los antiguos flujos de "PAT almacenado + secretos CI" con
+autenticación **OIDC** (OpenID Connect) basada en **tokens firmados por tu
+proveedor CI** mismo.
 
-**Resultado**: tu repositorio de GitHub **no** tiene `secrets.*` vinculados a Physalis.
-La prueba de identidad es el token OIDC que GitHub Actions emite automáticamente
-en cada ejecución del workflow.
+Se admiten tres proveedores, todos con el **mismo** mecanismo:
+
+- **GitHub Actions**
+- **GitLab CI/CD** (gitlab.com o instancia self-hosted)
+- **Bitbucket Pipelines**
+
+**Resultado**: tu repositorio **no** tiene secretos vinculados a Physalis. La
+prueba de identidad es el token OIDC que el runner CI emite automáticamente en
+cada ejecución de job. Physalis lo verifica contra una **Política** antes de
+devolver el bundle de despliegue (secretos + clave SSH + ruta).
 
 ## Diagrama de extremo a extremo
 
 ```
 ┌─────────────────┐      ┌──────────────────────────┐      ┌────────────┐
-│  GitHub Actions │ OIDC │ /api/deploy de Physalis   │ SSH  │   VPS      │
-│   workflow.yml  │─────▶│ - verifica el token OIDC  │─────▶│ /srv/...   │
-│                 │      │ - busca la Política        │      │            │
+│  Runner CI      │ OIDC │ /api/deploy de Physalis   │ SSH  │   VPS      │
+│  (GH/GL/BB)     │─────▶│ - verifica el token OIDC  │─────▶│ /srv/...   │
+│                 │      │ - busca Conexión+Política  │      │            │
 │                 │◀─────│ - devuelve el bundle       │      │            │
 └─────────────────┘      └──────────────────────────┘      └────────────┘
         │                                                         ▲
@@ -29,14 +36,40 @@ en cada ejecución del workflow.
         └─────────────────────────────────────────────────────────┘
 ```
 
-## Requisitos previos
+El runner CI, el VPS y el bundle SSH son **idénticos** sea cual sea el
+proveedor. Solo cambian: el formato del identificador del repo, el claim usado
+como 3ª dimensión de la Política, y la forma de solicitar el token.
 
-Antes de configurar un workflow, necesitas **3 objetos** en Physalis:
+## Los 4 objetos a configurar
+
+Antes de activar un despliegue, necesitas **4 objetos** en Physalis:
 
 1. Un **Servidor** a nivel de organización (clave SSH del VPS de destino)
 2. Un **Entorno** vinculado a ese Servidor (con un `deployPath`)
-3. Una **Política** que indique *"el repositorio X, en la rama Y, puede desplegar en el proyecto P,
-   entorno E"*
+3. Una **Conexión CI/CD** a nivel de organización (proveedor + issuer OIDC
+   + credenciales opcionales de registry / redeploy)
+4. Una **Política** que indique *"este repo, en esta rama, mediante este job,
+   puede desplegar en el proyecto P, entorno E"*
+
+## Tabla de referencia por proveedor
+
+Ten esta tabla a mano: resume todo lo que difiere entre los tres proveedores.
+El resto de la documentación remite a ella.
+
+| Aspecto | GitHub | GitLab | Bitbucket |
+|---|---|---|---|
+| **Identificador del repo** (Política + proyecto) | `owner/repo` | `project_path` (p. ej. `acme/web`, `acme/team/web`) | `repositoryUuid` (`{11111111-…}`) |
+| **3ª dimensión de la Política** | archivo de workflow (`deploy.yml`) | `environment: name:` del job | `deployment:` del step |
+| **Claim de rama** | `ref` | `$CI_COMMIT_BRANCH` | `branchName` |
+| **Audiencia (`aud`)** | obligatoria, debe coincidir con `OIDC_AUDIENCE` | obligatoria, debe coincidir con `OIDC_AUDIENCE` | no soportada → no exigida |
+| **Issuer (en la conexión)** | vacío para github.com | vacío para gitlab.com; URL de instancia si self-hosted | **obligatorio**: URL OIDC del workspace |
+| **Plantilla** | [deploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.modele.yml) | [deploy.gitlab-ci.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.gitlab-ci.modele.yml) | [deploy.bitbucket-pipelines.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.bitbucket-pipelines.modele.yml) |
+
+> **A tener en cuenta**: solo la plantilla de GitHub incluye un **job `build`**
+> que construye la imagen Docker e inyecta los `VITE_*` como `--build-arg`
+> (ver [§ Vite build args](#vite-build-args-job-build)). Las plantillas de
+> GitLab y Bitbucket son **deploy-only**: suponen que la imagen ya está
+> construida y publicada en un registro, y simplemente la tiran + reinician.
 
 ## 1. Crear un Servidor
 
@@ -44,13 +77,11 @@ Antes de configurar un workflow, necesitas **3 objetos** en Physalis:
 
 Página de la organización → pestaña **"Servers"** → **"+ New server"**.
 
-Campos:
-
 | Campo           | Descripción                                                                |
 |-----------------|----------------------------------------------------------------------------|
 | **Name**        | Etiqueta interna (p. ej. "Hetzner prod VPS")                               |
 | **IP**          | IPv4 o hostname que resuelve el VPS                                        |
-| **SSH user**    | El usuario Linux en el VPS (normalmente `deploy` o `github-deploy`)        |
+| **SSH user**    | El usuario Linux en el VPS (normalmente `deploy` o `ci-deploy`)           |
 | **Private key** | La clave privada SSH **completa** (PEM, OpenSSH) — pegada una sola vez     |
 
 > ⚠️ La **clave privada nunca vuelve a ser legible** desde la UI tras la
@@ -66,7 +97,7 @@ En el VPS, crea el usuario de despliegue y autoriza la clave pública:
 sudo adduser --disabled-password --gecos "" deploy
 sudo usermod -aG docker deploy
 sudo -u deploy mkdir -p ~deploy/.ssh
-sudo -u deploy bash -c 'echo "ssh-ed25519 AAAA... github-deploy" >> ~/.ssh/authorized_keys'
+sudo -u deploy bash -c 'echo "ssh-ed25519 AAAA... ci-deploy" >> ~/.ssh/authorized_keys'
 sudo -u deploy chmod 600 ~deploy/.ssh/authorized_keys
 ```
 
@@ -81,80 +112,174 @@ Elige el servidor creado en el paso 1, ajusta el `deployPath` si es necesario
 
 Consulta [Proyectos y entornos](projets-et-environnements) para más detalles.
 
-## 3. Crear una Política
+## 3. Crear una Conexión CI/CD
 
-Esta es la **regla de autorización**: quién (claims OIDC del workflow)
-puede desplegar dónde (proyecto + entorno de Physalis).
+El **proveedor**, el **issuer OIDC** y las **credenciales de infraestructura**
+(token de redeploy, acceso a un registro privado) viven en una **Conexión
+CI/CD** a nivel de organización — pestaña **"CI/CD"**. Cada proyecto selecciona
+una en sus Ajustes.
+
+Una conexión contiene:
+
+| Campo                  | Función                                                             |
+|------------------------|---------------------------------------------------------------------|
+| **Proveedor**          | `github` \| `gitlab` \| `bitbucket`                                 |
+| **Issuer OIDC**        | ver abajo — determina qué autoridad de firma se acepta              |
+| **Token de redeploy**  | PAT para el botón "Redeploy" (dispatch) — *solo GitHub*            |
+| **Registry — URL**     | por defecto `ghcr.io`                                                |
+| **Registry — usuario/token** | para `docker login` en el VPS (registro privado)              |
+
+### Definir el issuer según el proveedor
+
+- **GitHub** — deja el issuer **vacío** (github.com es de confianza por
+  defecto, issuer `https://token.actions.githubusercontent.com`).
+- **GitLab** — déjalo **vacío** para gitlab.com. Para una instancia
+  self-hosted, indica la URL de la instancia (p. ej. `https://gitlab.miempresa.com`).
+- **Bitbucket** — **obligatorio**: la URL OIDC del workspace, visible en
+  *Workspace settings → OpenID Connect*, de la forma
+  `https://api.bitbucket.org/2.0/workspaces/<ws>/pipelines-config/identity/oidc`.
+
+> **Por qué importa el issuer**: Physalis solo acepta un token si su emisor es
+> conocido. Para instancias dinámicas (GitLab self-hosted, cada workspace de
+> Bitbucket), el issuer debe estar **registrado explícitamente** en una
+> conexión; de lo contrario el token se rechaza con `untrusted_issuer`.
+
+Las credenciales del registry las devuelve `/api/deploy` bajo una clave
+`registry` separada, distinta de `secrets[]` — **no** contaminan el `.env` del
+contenedor; solo se usan para el `docker login` remoto. Todo está cifrado
+(AES-256-GCM) y nunca se vuelve a mostrar.
+
+> **Migración**: los antiguos `OrgSecret` reservados (`GITHUB_DISPATCH_TOKEN`,
+> `REGISTRY_PAT/USER/URL`) se convierten automáticamente en una conexión
+> "GitHub" durante la actualización — nada que volver a introducir.
+
+Una vez creada la conexión, vincúlala al proyecto y define el **repo** en el
+formato esperado por el proveedor (ver la tabla de referencia): proyecto →
+**Ajustes** → **Conexión CI/CD** + campo **Repo**.
+
+## 4. Crear una Política
+
+Esta es la **regla de autorización**: quién (claims OIDC del job) puede
+desplegar dónde (proyecto + entorno de Physalis).
 
 En la página del proyecto → pestaña **"Policies"** → **"+ New Policy"**.
 
 Campos (todos obligatorios, **coincidencia estricta, sin comodines**):
 
-| Campo           | Ejemplo                          | Origen                                         |
-|-----------------|----------------------------------|------------------------------------------------|
-| **Repo**        | `argo-web/physalis`              | `owner/repo` de GitHub                         |
-| **Workflow**    | `deploy.yml`                     | Nombre del archivo del workflow                |
-| **Branch**      | `main`                           | Rama desde la que se ejecuta el workflow       |
-| **Environment** | `production`                     | Un entorno existente en el proyecto            |
+| Campo             | GitHub                | GitLab                  | Bitbucket               |
+|-------------------|-----------------------|-------------------------|-------------------------|
+| **Repo**          | `argo-web/physalis`   | `acme/web`              | `{11111111-…}`          |
+| **Workflow / Entorno CI** | `deploy.yml`  | `production` (`environment: name:`) | `production` (`deployment:`) |
+| **Branch**        | `main`                | `main`                  | `main`                  |
+| **Environment**   | un entorno existente del proyecto | igual       | igual                   |
 
-> El botón **"Edit"** en una Política existente permite ajustar los 4 campos
-> (se detecta una colisión si ya existe otra tupla igual).
+La columna **"Workflow / Entorno CI"** es la 3ª dimensión: es un archivo de
+workflow en GitHub, pero el **nombre del entorno CI declarado por el job** en
+GitLab (`environment: name:`) y Bitbucket (`deployment:`). El campo de la
+Política debe coincidir **exactamente** con lo que declara el job.
 
-### Qué significa esto
+> El botón **"Edit"** en una Política existente permite ajustar los campos (se
+> detecta una colisión si ya existe otra tupla igual).
 
-Cuando se ejecuta un workflow, GitHub emite un token OIDC con claims como:
+### Qué significa esto en la práctica
+
+Cuando se ejecuta un job, el proveedor emite un token OIDC. Physalis verifica
+su **firma** (el JWKS del proveedor), extrae `(repo, 3ª dimensión, rama)`,
+busca una Política que coincida **exactamente**, y solo activa el despliegue
+si el `(project, environment)` del cuerpo de la petición coincide.
+
+Ejemplos de claims según el proveedor:
 
 ```json
+// GitHub
 {
   "repository": "argo-web/physalis",
-  "workflow_ref": "argo-web/physalis/.github/workflows/deploy.yml@refs/heads/main",
+  "workflow_ref": ".../.github/workflows/deploy.yml@refs/heads/main",
   "ref": "refs/heads/main",
-  "audience": "vault.physalis.cloud"
+  "aud": "vault.physalis.cloud"
+}
+
+// GitLab
+{
+  "project_path": "acme/web",
+  "environment": "production",
+  "ref": "main",
+  "aud": "vault.physalis.cloud"
+}
+
+// Bitbucket
+{
+  "repositoryUuid": "{11111111-...}",
+  "deploymentEnvironment": "production",
+  "branchName": "main"
+  // sin aud: Bitbucket no permite configurarlo
 }
 ```
 
-Physalis verifica la firma contra el JWKS de GitHub, extrae
-`(repository, workflow, branch)`, busca una Política que coincida **exactamente**,
-y solo activa el despliegue si la combinación `(project, env)`
-del cuerpo de la petición también coincide.
+## 5. El workflow / pipeline plantilla
 
-## 4. El workflow plantilla
+Copia la plantilla correspondiente a tu proveedor en tu repo y adapta las
+variables al inicio del archivo:
 
-Copia [docs/deploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.modele.yml)
-en `.github/workflows/deploy.yml` de tu repositorio. Adapta las variables
-al inicio:
+| Proveedor | Plantilla a copiar | Ubicación en el repo |
+|---|---|---|
+| GitHub    | [deploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.modele.yml) | `.github/workflows/deploy.yml` |
+| GitLab    | [deploy.gitlab-ci.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.gitlab-ci.modele.yml) | `.gitlab-ci.yml` |
+| Bitbucket | [deploy.bitbucket-pipelines.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.bitbucket-pipelines.modele.yml) | `bitbucket-pipelines.yml` |
 
-```yaml
-env:
-  VAULT_URL: https://vault.physalis.cloud
-  VAULT_AUDIENCE: vault.physalis.cloud
-  VAULT_PROJECT: physalis      # slug del proyecto en Physalis
-  VAULT_ENV: main              # entorno de destino
+Las variables comunes a adaptar:
+
+```
+VAULT_URL       URL de Physalis (p. ej. https://vault.physalis.cloud)
+VAULT_AUDIENCE  audiencia OIDC = OIDC_AUDIENCE del vault (GitHub/GitLab; ignorada en Bitbucket)
+VAULT_PROJECT   slug del proyecto en Physalis
+VAULT_ENV       entorno de destino en Physalis (production, staging, ...)
 ```
 
-El workflow contiene **2 jobs**:
+### Cómo solicita cada proveedor su token OIDC
 
-1. **build** — obtiene su propio token OIDC, recupera `VITE_*` de
-   Physalis, construye la imagen Docker pasando `VITE_*` como `--build-arg`,
-   hace push a GHCR
-2. **deploy** — vuelve a obtener el bundle completo, escribe `.env` + `docker-compose.yml`
-   en el VPS via SCP, ejecuta `docker compose pull && up -d`
+- **GitHub** — `permissions: id-token: write` en el job, luego
+  `core.getIDToken(audience)`:
 
-### Permisos del workflow
+  ```yaml
+  permissions:
+    id-token: write    # OBLIGATORIO para core.getIDToken()
+    contents: read
+    packages: write    # para hacer push a GHCR con GITHUB_TOKEN (job build)
+  ```
 
-```yaml
-permissions:
-  id-token: write    # OBLIGATORIO para core.getIDToken()
-  contents: read
-  packages: write    # para hacer push a GHCR con GITHUB_TOKEN
-```
+- **GitLab** — palabra clave `id_tokens`, el `aud` debe coincidir con `OIDC_AUDIENCE`:
 
-## 5. Vite build args
+  ```yaml
+  deploy:
+    environment:
+      name: production           # = 3ª dimensión de la Política
+    id_tokens:
+      VAULT_OIDC_TOKEN:
+        aud: "$VAULT_AUDIENCE"
+  ```
+
+- **Bitbucket** — `oidc: true` en el step; el token llega en
+  `$BITBUCKET_STEP_OIDC_TOKEN`. Sin audiencia que configurar:
+
+  ```yaml
+  - step:
+      oidc: true
+      deployment: production     # = 3ª dimensión de la Política
+  ```
+
+En los tres casos, el job llama después a `POST /api/deploy` con el token como
+`Authorization: Bearer`, recibe el bundle, escribe `.env` (+ el opcional
+`docker-compose.yml`) en el VPS via SCP, y luego `docker compose pull && up -d`.
+
+## Vite build args (job `build`)
+
+> Se aplica **solo a la plantilla de GitHub**. Las plantillas de GitLab y
+> Bitbucket son deploy-only y suponen la imagen ya construida.
 
 Cualquier secreto de entorno con el prefijo `VITE_` se recupera en el job
-`build` y se pasa a `docker build` como `--build-arg`.
-
-En tu `Dockerfile` de frontend, declara los `ARG` correspondientes:
+`build` y se pasa a `docker build` como `--build-arg`. En tu `Dockerfile` de
+frontend, declara los `ARG` correspondientes:
 
 ```dockerfile
 FROM node:20-alpine AS build
@@ -174,124 +299,73 @@ FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 ```
 
-> ⚠️ Vite **incrusta** `VITE_*` en el bundle JS final → públicamente visible
-> en el lado del navegador. Reserva estas variables para URLs públicas, feature flags, etc.
-> Consulta [Secretos y categorías](secrets) para la convención completa.
+> ⚠️ Vite **incrusta** los `VITE_*` en el bundle JS final → públicamente
+> visible en el lado del navegador. Reserva estas variables para URLs públicas,
+> feature flags, etc. Consulta [Secretos y categorías](secrets) para la
+> convención completa.
 
-## 6. Conexiones CI/CD (registry + redeploy)
+> **GitLab / Bitbucket**: si necesitas construir la imagen, añade un job de
+> build previo (que también puede obtener los `VITE_*` mediante el mismo
+> `/api/deploy`) y publica en tu registro antes del job de deploy.
 
-El proveedor CI, el issuer OIDC y las credenciales de infraestructura (token de
-redeploy, acceso a un registro privado) viven en una **Conexión CI/CD** a nivel
-de organización — pestaña **"CI/CD"**. Cada proyecto selecciona una en sus
-Ajustes.
+## 6. Primer despliegue
 
-Una conexión contiene:
-
-| Campo                  | Función                                                   |
-|------------------------|-----------------------------------------------------------|
-| Proveedor              | `github` \| `gitlab` \| `bitbucket`                       |
-| Issuer OIDC            | vacío para github.com / gitlab.com; URL de instancia/workspace si no |
-| Token de redeploy      | PAT para el botón "Redeploy" (dispatch)                   |
-| Registry — URL         | por defecto `ghcr.io`                                      |
-| Registry — usuario/token | para `docker login` en el VPS (registro privado)        |
-
-Las credenciales del registry las devuelve `/api/deploy` bajo una clave
-`registry` separada, distinta de `secrets[]` — **no** contaminan el `.env` del
-contenedor; solo se usan para el `docker login` remoto. Todo está cifrado
-(AES-256-GCM) y nunca se vuelve a mostrar.
-
-> Migración: los antiguos `OrgSecret` reservados (`GITHUB_DISPATCH_TOKEN`,
-> `REGISTRY_PAT/USER/URL`) se convierten automáticamente en una conexión
-> "GitHub" durante la actualización — nada que volver a introducir.
-
-## 7. Primer despliegue
-
-1. Haz push a `main` → el workflow `deploy.yml` se inicia
-2. Job `build`: obtiene VITE_*, construye la imagen, hace push a GHCR
+1. Haz push a `main` → el pipeline se inicia
+2. *(GitHub)* Job `build`: obtiene los `VITE_*`, construye la imagen, hace push a GHCR
 3. Job `deploy`: obtiene el bundle, escribe `.env` + `docker-compose.yml`
    en el VPS, ejecuta `docker compose up -d`
 4. Comprueba el **registro de auditoría** de Physalis (página de la org) →
-   verás `DEPLOY_AUTHORIZED` con los detalles (repo, workflow, branch, env)
+   verás `DEPLOY_AUTHORIZED` con los detalles (repo, 3ª dimensión, rama, entorno)
 
 ### En caso de fallo
 
 El registro de auditoría de Physalis registra `DEPLOY_DENIED` con una razón diagnosticable:
 
-| `reason`               | Causa probable                                                             |
+| `reason`               | Causa probable                                                              |
 |------------------------|----------------------------------------------------------------------------|
-| `wrong_audience`       | `VAULT_AUDIENCE` en el workflow ≠ `OIDC_AUDIENCE` en Physalis              |
+| `wrong_audience`       | `VAULT_AUDIENCE` del job ≠ `OIDC_AUDIENCE` del vault (GitHub/GitLab)        |
 | `wrong_issuer`         | El issuer del token es desconocido / no soportado                          |
-| `untrusted_issuer`     | Issuer dinámico (GitLab self-hosted / Bitbucket) no registrado en una conexión |
+| `untrusted_issuer`     | Issuer dinámico (GitLab self-hosted / workspace de Bitbucket) no registrado en una conexión |
 | `expired`              | El job tardó demasiado antes de llamar a `/api/deploy`                     |
-| `policy_not_found`     | Ninguna Política coincide con `(repo, workflow, branch)`                   |
+| `policy_not_found`     | Ninguna Política coincide con `(repo, 3ª dimensión, rama)`                 |
 | `policy_match_failed`  | Política encontrada pero `(project, env)` del cuerpo no coincide           |
 | `no_server`            | El entorno existe pero no está vinculado a ningún Servidor                 |
 
+> **Error frecuente (GitLab/Bitbucket)**: un `policy_not_found` suele deberse a
+> un desajuste en la 3ª dimensión — el `environment: name:` (GitLab) o
+> `deployment:` (Bitbucket) declarado en el job no coincide, carácter a
+> carácter, con el campo "Entorno CI" de la Política.
+
 ## Botón "Redeploy" (workflow_dispatch)
 
-Si deseas activar un redespliegue **desde la UI de Physalis** sin
-hacer push, define el **token de redeploy** en la conexión CI/CD del proyecto
-(pestaña "CI/CD" de la org — un PAT con alcance `repo` o un token de GitHub
-App) y el botón **"Redeploy"** aparecerá en cada entorno. (Solo GitHub por
-ahora.)
+> **Solo GitHub** por ahora.
+
+Si deseas activar un redespliegue **desde la UI de Physalis** sin hacer push,
+define el **token de redeploy** en la conexión CI/CD del proyecto (pestaña
+"CI/CD" de la org — un PAT con alcance `repo` o un token de GitHub App) y el
+botón **"Redeploy"** aparecerá en cada entorno.
 
 Al hacer clic, Physalis llama a `POST /repos/{owner}/{repo}/actions/workflows/{wf}/dispatches`
-que activa el workflow `redeploy.yml` en la rama del entorno.
-Este workflow **no reconstruye imágenes** — vuelve a obtener el bundle `.env`,
-lo escribe en el VPS y reinicia los contenedores con `docker compose up -d`.
-Esto es suficiente para secretos cargados en tiempo de ejecución (variables de entorno,
+que activa el workflow `redeploy.yml` en la rama del entorno. Este workflow
+**no reconstruye imágenes** — vuelve a obtener el bundle `.env`, lo escribe en
+el VPS y reinicia los contenedores con `docker compose up -d`. Esto es
+suficiente para secretos cargados en tiempo de ejecución (variables de entorno,
 claves pasadas mediante `.env`).
 
 Copia [docs/redeploy.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/redeploy.modele.yml)
-en `.github/workflows/redeploy.yml` de tu repositorio y adapta las variables
-al inicio del archivo.
+en `.github/workflows/redeploy.yml` de tu repositorio y adapta las variables al
+inicio del archivo.
 
-> **Secretos inyectados en tiempo de compilación** (p. ej. `VITE_*`) — Si tu secreto se
-> pasa como `--build-arg` de Docker durante la construcción de la imagen, un simple redespliegue
-> no es suficiente. Necesitas activar el workflow de compilación completo (`deploy.yml`).
-> Physalis gestiona esto automáticamente mediante la opción **"Full build required"**
-> en la configuración de rotación del secreto (consulta [Rotación de secretos](rotaciones)).
-
-## GitLab CI/CD y Bitbucket Pipelines
-
-El mismo `/api/deploy` acepta tokens OIDC de **GitLab CI/CD** y **Bitbucket
-Pipelines**. Toda la infraestructura (Server, Environment, bundle SSH +
-secretos + compose) es idéntica — solo cambian el proveedor de la conexión, el
-formato del repo y el disparador.
-
-**Puesta en marcha:**
-
-1. Crea una **conexión CI/CD** (pestaña "CI/CD" de la org) del proveedor
-   adecuado:
-   - **GitLab** — issuer vacío para gitlab.com, o la URL de la instancia para
-     self-hosted (p. ej. `https://gitlab.miempresa.com`).
-   - **Bitbucket** — issuer = la URL OIDC del workspace (Workspace settings →
-     OpenID Connect), **obligatorio**.
-2. Vincula el proyecto a esa conexión y define su **repo**:
-   - GitLab: el `project_path` (p. ej. `acme/web`, `acme/team/web`).
-   - Bitbucket: el `repositoryUuid` (Repository settings, entre llaves).
-3. Crea tus **Políticas**. La 3ª dimensión ya no es un archivo de workflow sino
-   el **entorno CI** declarado por el job:
-
-| Proveedor | repo (política)   | "workflow" (política) = | rama          |
-|-----------|-------------------|-------------------------|---------------|
-| GitHub    | `owner/repo`      | archivo `*.yml`         | `ref`         |
-| GitLab    | `project_path`    | `environment: name:`    | `$CI_COMMIT_BRANCH` |
-| Bitbucket | `repositoryUuid`  | `deployment:`           | `branchName`  |
-
-4. Copia la plantilla correspondiente y adapta las variables de arriba:
-   - GitLab: [docs/deploy.gitlab-ci.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.gitlab-ci.modele.yml)
-   - Bitbucket: [docs/deploy.bitbucket-pipelines.modele.yml](https://github.com/physalis-cloud/physalis/blob/main/docs/deploy.bitbucket-pipelines.modele.yml)
-
-> **Audiencia** — GitHub y GitLab: el `aud` del token debe coincidir con
-> `OIDC_AUDIENCE` del vault. Bitbucket no permite configurar el `aud` OIDC, por
-> lo que Physalis no lo exige para ese proveedor; el alcance queda acotado por
-> el issuer del workspace (registrado en la conexión) + el `repositoryUuid` +
-> la rama.
+> **Secretos inyectados en tiempo de compilación** (p. ej. `VITE_*`) — Si tu
+> secreto se pasa como `--build-arg` de Docker durante la construcción de la
+> imagen, un simple redespliegue no es suficiente. Necesitas activar el
+> workflow de compilación completo (`deploy.yml`). Physalis lo gestiona
+> automáticamente mediante la opción **"Full build required"** en la
+> configuración de rotación del secreto (consulta [Rotación de secretos](rotaciones)).
 
 ## Para ir más lejos
 
-- [Secretos y categorías](secrets) — cómo tus `VITE_*` y otras variables de entorno
-  llegan al bundle
+- [Secretos y categorías](secrets) — cómo tus `VITE_*` y otras variables de
+  entorno llegan al bundle
 - [Organizaciones y roles](organizaciones-y-roles) — quién puede gestionar
-  Servidores y Políticas
+  Servidores, Conexiones CI/CD y Políticas
