@@ -106,5 +106,14 @@
       "fr": { "file": "12-email.md",                    "slug": "email" },
       "es": { "file": "12-email.md",                    "slug": "email" }
     }
+  },
+  {
+    "order": 13,
+    "icon": "RiUploadCloud2Line",
+    "translations": {
+      "en": { "file": "13-outbound-sync.md",            "slug": "outbound-sync" },
+      "fr": { "file": "13-synchronisation-sortante.md", "slug": "synchronisation-sortante" },
+      "es": { "file": "13-sincronizacion-saliente.md",  "slug": "sincronizacion-saliente" }
+    }
   }
 ]
