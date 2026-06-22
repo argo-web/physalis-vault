@@ -102,13 +102,21 @@ Cet onglet regroupe les **références non-secrètes** liées au projet :
 
 - **Cards d'environnement** — récap visuel par env (URL, serveur, dernier
   déploiement vu dans l'audit)
-- **Services** — entrées chiffrées `{user, password}` pour les services
-  tiers (Sentry, Stripe, BDD externe…) qui n'entrent pas dans le `.env`
+- **Services** — entrées pour les services liés au projet. Deux usages :
+  - *service tiers* (Sentry, Stripe…) : **identifiant + mot de passe** chiffrés ;
+  - *service backend* : souvent **juste une URL** (identifiant/mot de passe
+    **optionnels**), qui peut porter le **hook de rotation des comptes** liés.
 - **Comptes applicatifs** (`AppAccount`) — credentials d'utilisateurs
-  applicatifs (admin Strapi, super-user PostgreSQL…) chiffrés
+  applicatifs (admin Strapi, super-user PostgreSQL…) chiffrés. Un compte peut
+  être **lié à un environnement** (frontend) ou à un **service** (backend) :
+  son URL en découle (l'extension le propose alors sur la bonne page).
 
 C'est l'endroit où vous documentez « comment se connecter à ce projet
 manuellement », sans polluer les secrets injectés au runtime.
+
+> Services et comptes peuvent aussi être **rotés** (rappel assisté, ou
+> **webhook** pour les comptes via le hook du service backend lié) — voir
+> [Rotation des secrets](rotations).
 
 ## Permissions par projet (`ProjectMember`)
 

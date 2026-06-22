@@ -2,186 +2,309 @@
 title: Rotation des secrets
 order: 10
 icon: RiRefreshLine
-summary: Comprendre et configurer le renouvellement automatique ou assisté des secrets sensibles.
+summary: Renouveler automatiquement ou par rappel assisté les secrets, clés, mots de passe de base de données et comptes applicatifs.
 ---
 
 # Rotation des secrets
 
-La **rotation** est le mécanisme par lequel Physalis renouvelle périodiquement
-la valeur d'un secret — soit automatiquement, soit en rappelant à l'équipe
-qu'une action manuelle est requise.
+La **rotation** renouvelle périodiquement un credential. Le principe clé :
+on **change le credential à la source** (sur le système cible), **puis** on met à
+jour la valeur dans Physalis — ce n'est pas un simple `upsert` dans le vault.
 
-Chaque secret peut se voir attribuer une **stratégie de rotation** et une
-**fréquence** (en jours). Un cron tourne toutes les heures et déclenche les
-rotations dont la date est passée.
+Deux familles :
+
+- **Automatique** — un exécuteur change le credential à la source puis reporte
+  la nouvelle valeur (bases de données, secrets internes, hooks d'application…).
+- **Rappel assisté** — Physalis ne peut pas changer le credential à votre place
+  (mot de passe humain, compte tiers) : il vous **notifie**, et vous **générez /
+  saisissez** la nouvelle valeur qui est alors enregistrée et versionnée.
+
+La rotation s'applique à plusieurs **endroits où vivent des secrets** :
+
+| Objet | Où | Stratégies possibles |
+|-------|-----|----------------------|
+| **Secret d'environnement** | onglet *Secrets* d'un projet | Database, JWT, Clé API, Webhook, Rappel |
+| **Service** (Stripe, OVH…) | onglet *Accès* | Rappel assisté (sur ses propres identifiants) |
+| **Compte applicatif** | onglet *Accès* | Rappel assisté ou **Webhook** (hook du backend lié) |
+| **Entrée de coffre** d'équipe / d'org | onglet *Coffre* | Rappel assisté |
+
+## Quelle stratégie pour quel cas ?
+
+| Vous voulez roter… | Stratégie | Comment |
+|--------------------|-----------|---------|
+| un mot de passe de **base de données** (rôle PG/MySQL) | **Database** | automatique, self-rotation |
+| un **JWT / session / clé de chiffrement** interne | **JWT Secret** | automatique, généré par Physalis |
+| une **clé de l'API Gateway** Physalis | **Clé API** | automatique |
+| un **mot de passe de compte** (admin/utilisateur) hashé par l'app | **Webhook** | l'app applique via un hook |
+| une **clé tierce / token** (Stripe, Mailgun…) qu'aucun hook ne couvre | **Rappel** | vous changez à la source, puis enregistrez |
 
 ## Prérequis
 
-La rotation est une **fonctionnalité opt-in** au niveau de l'organisation.
-Un **ADMIN** ou **OWNER** d'org doit l'activer dans les paramètres avant de
-pouvoir la configurer sur des secrets individuels.
+La rotation est **opt-in au niveau de l'organisation** et réservée aux **plans
+payants**. Un **ADMIN** ou **OWNER** de l'org l'active dans
+*Paramètres de l'organisation → Avancé*. Tant qu'elle est désactivée, aucun
+bouton de rotation n'apparaît et le cron ignore l'organisation.
 
-La rotation s'arrête également si le **projet est mis en pause** (voir
-[Mettre en pause](#mettre-en-pause-un-projet)).
+Elle se suspend aussi quand un **projet est mis en pause**.
 
-## Stratégies disponibles
+## Le bouton « Rotation »
 
-### `DATABASE` — rotation de mot de passe de base de données
+Partout (secret, service, compte, entrée de coffre), un **seul bouton
+« Rotation »** ouvre une modale qui regroupe :
 
-Physalis délègue la rotation à un workflow **N8n** via webhook. Le workflow
-génère un nouveau mot de passe, le change sur la base de données, puis appelle
-le **callback Physalis** pour confirmer le succès ou l'échec.
+1. **La configuration** : activer + **intervalle** (en jours) + la **stratégie**
+   (pour les secrets d'environnement).
+2. **La rotation immédiate** : pour un rappel, une section *générer / saisir* la
+   nouvelle valeur ; pour une stratégie automatique, un bouton **« Forcer »**.
 
-Champs requis sur le secret :
+> Le bouton « Rotation » n'apparaît que sur les éléments qui ressemblent à un
+> credential (le nom contient `password`, `secret`, `token`, `key`, `jwt`…). Un
+> `PORT`, une URL publique ou un flag n'en ont pas. Toutes les stratégies
+> restent sélectionnables dans la modale, avec un **défaut intelligent** déduit
+> du nom (un `*_PASSWORD` → Database, un `JWT_SECRET` → JWT, le reste → Rappel).
 
-| Champ        | Description                                      |
-|--------------|--------------------------------------------------|
-| `dbType`     | `POSTGRESQL`, `MYSQL` ou `MONGODB`               |
-| `dbHost`     | Hostname du serveur de base de données           |
-| `dbPort`     | Port (ex. `5432` pour PostgreSQL)                |
-| `dbName`     | Nom de la base                                   |
-| `dbUser`     | Utilisateur dont le mot de passe sera tourné     |
+## Stratégies (secrets d'environnement)
 
-Si l'organisation dispose d'un `GITHUB_DISPATCH_TOKEN` dans ses OrgSecrets et
-que le projet a un `githubRepo` configuré, Physalis déclenche automatiquement
-un redéploiement via GitHub Actions après la rotation.
+### Base de données
 
-> ⚙️ La variable d'environnement serveur `ROTATION_N8N_WEBHOOK_URL` doit
-> pointer vers le webhook N8n dédié.
+Rotation **self-rotation** du mot de passe d'un rôle PostgreSQL / MySQL : on se
+connecte **en tant que** l'utilisateur à roter (avec son mot de passe courant,
+lu depuis le `.env` injecté) et on exécute `ALTER … PASSWORD` — **aucun
+credential admin** n'est stocké ni utilisé. Deux modes d'exécution :
 
-### `JWT_SECRET` — rotation de secret JWT
+- **Agent sur le VPS** *(défaut)* — pour une **base interne au réseau Docker**
+  du projet : le sidecar **agent** (le même que pour les backups) effectue la
+  rotation **en local**, puis reporte la nouvelle valeur à Physalis. **Aucun
+  appel externe** n'est nécessaire.
+- **Directe** — pour une **base managée joignable** (Supabase, RDS, Neon…),
+  changée directement par Physalis. *(Ce mode est en cours de finalisation.)*
 
-Physalis génère lui-même un nouveau secret de **128 caractères hexadécimaux**
-(64 octets aléatoires), chiffre la nouvelle valeur, crée une version
-d'historique de l'ancienne, puis met à jour le secret — entièrement **sans
-intervention externe**.
+| Champ | Description |
+|-------|-------------|
+| `dbType` | `POSTGRESQL` ou `MYSQL` |
+| `dbHost` | hôte (nom de service Docker en mode Agent, hôte public en Directe) |
+| `dbPort` | port (`5432`, `3306`…) |
+| `dbName` | nom de la base |
+| `dbUser` | utilisateur dont le mot de passe est roté |
 
-Si le projet est lié à un dépôt GitHub avec un `GITHUB_DISPATCH_TOKEN`, un
-redéploiement est déclenché automatiquement pour que les conteneurs rechargent
-la nouvelle valeur.
+Après confirmation du changement à la source, Physalis écrit la nouvelle valeur
+(snapshot de l'ancienne dans le versioning) et déclenche un **redéploiement**
+pour que l'application recharge son `.env`.
 
-> Cette stratégie est **entièrement autonome** : aucun workflow N8n n'est
-> requis. C'est la stratégie recommandée pour les `JWT_SECRET`,
-> `NEXTAUTH_SECRET` et secrets similaires.
+### JWT Secret
 
-### `API_KEY` — rotation de clé API Gateway
+Physalis **génère lui-même** une nouvelle valeur aléatoire (64 octets), la
+chiffre, archive l'ancienne, puis déclenche un redéploiement — **sans
+intervention externe**. Idéale pour `JWT_SECRET`, `NEXTAUTH_SECRET`,
+`SESSION_SECRET`, clés de chiffrement internes…
 
-Physalis génère automatiquement une nouvelle clé dans l'**API Gateway** du
-projet, met à jour la valeur du secret, révoque l'ancienne clé
-**immédiatement**, puis déclenche un redéploiement GitHub Actions pour que
-l'application recharge la nouvelle valeur depuis le vault.
+### Clé API Gateway
 
-Prérequis :
+Génère une nouvelle clé dans l'**API Gateway** du projet, met à jour le secret,
+**révoque immédiatement** l'ancienne, puis redéploie. Le secret doit être lié à
+une clé existante (sélection API + clé). Concerne uniquement les clés **émises
+par la gateway Physalis** (pas une clé tierce type Stripe).
 
-- Le projet doit avoir au moins une **API** configurée dans l'onglet
-  **API Gateway**.
-- Le secret doit être **lié à une clé API** existante — sélectionnez l'API
-  puis la clé lors de la configuration de la rotation.
+### Webhook (hook côté application)
 
-> ⚠️ **Cette stratégie ne convient qu'aux applications qui lisent leur `.env`
-> depuis le vault au démarrage** (via un redéploiement GitHub Actions). Si la
-> clé est copiée directement dans n8n, Make ou un autre outil externe, vous
-> devrez la mettre à jour manuellement après chaque rotation.
+Pour les credentials que **seule l'application sait appliquer** — typiquement un
+**mot de passe de compte** hashé en base par l'app (admin, utilisateur). Voir
+la section **Rotation par hook (Webhook)** ci-dessous.
 
-Après chaque rotation :
+### Rappel (assisté)
 
-- La nouvelle clé brute est stockée chiffrée dans le secret (l'ancienne
-  valeur est archivée dans le versioning).
-- L'ancienne clé est révoquée côté Gateway : tout appel à
-  `/api/gateway/verify` avec l'ancienne clé retourne `{ valid: false,
-  reason: "revoked" }` **immédiatement** (mode REMOTE).
-- Si le projet est lié à un dépôt GitHub et que `GITHUB_DISPATCH_TOKEN` est
-  configuré, un redéploiement est déclenché automatiquement.
+Physalis **ne change rien à la source**. À l'échéance, il **notifie** l'ADMIN /
+OWNER de l'org et pose un badge. Vous changez le credential chez le fournisseur,
+puis, via la **rotation immédiate** de la modale, vous **générez ou saisissez**
+la nouvelle valeur : Physalis l'enregistre et archive l'ancienne. Adapté aux
+clés tierces, tokens, mots de passe partagés.
 
-### `REMINDER` — rappel de rotation manuelle
+## Rotation par hook (Webhook)
 
-Physalis **n'effectue pas** la rotation lui-même. Il envoie un e-mail à
-l'**ADMIN ou OWNER** de l'organisation lui demandant de renouveler le secret
-manuellement dans son service tiers.
+La rotation des **comptes admin/utilisateurs** est bloquée par le **hashing** :
+seule l'application sait hasher correctement le mot de passe (bcrypt, argon2,
+sel, pepper…). Reproduire ce hashing côté Physalis serait fragile et risquerait
+un lockout. La solution : **un hook exposé par l'application**, qui applique le
+nouveau mot de passe avec son propre code.
 
-Une fois la rotation effectuée en dehors de Physalis, le membre doit cliquer
-sur **« Marquer comme roté »** dans l'UI (ou appeler l'endpoint
-`/rotation/mark-rotated`) pour réinitialiser le compteur et planifier la
-prochaine échéance.
+**Principe** : Physalis (ou l'agent) **génère** un mot de passe fort et l'envoie
+au hook ; l'application l'**applique** (hashe + met à jour sa source) et répond
+**2xx** ; Physalis **committe alors** la valeur qu'il a générée.
 
-> Adaptée aux secrets tiers pour lesquels vous n'avez pas de webhook
-> automatisable : clés API, certificats, mots de passe partagés…
+### Le contrat du hook
 
-## Authentification du callback N8n
+L'application doit exposer un endpoint qui répond `2xx` une fois le credential
+appliqué :
 
-Pour la stratégie `DATABASE`, N8n reçoit un `rotationToken` dans le payload
-initial et doit le renvoyer dans le callback. Ce token est un **HMAC-SHA256**
-calculé ainsi :
+```http
+POST <url-du-hook>
+Authorization: Bearer <token>        # optionnel mais recommandé
+Content-Type: application/json
 
+# pour un secret d'environnement :
+{ "secretKey": "ADMIN_PASSWORD", "newValue": "<généré par Physalis>" }
+
+# pour un compte applicatif :
+{ "user": "admin@exemple.fr", "newValue": "<généré par Physalis>" }
 ```
-window = floor(timestamp_ms / 3_600_000)   // heure courante en entier
-token  = "<window>.<HMAC-SHA256(secretId + "|" + window, ROTATION_HMAC_KEY)>"
-```
 
-Le token est **valide 2 heures** (fenêtre ±1 heure autour de l'heure
-d'émission). La clé HMAC est configurée via la variable d'environnement
-`ROTATION_HMAC_KEY`.
+- **`Bearer <token>`** : secret partagé. Vous le renseignez dans Physalis, et
+  votre hook le vérifie. C'est souvent un **token fourni par le backend** (ex.
+  un token d'accès Directus) que vous collez ; un bouton *Générer* est dispo si
+  vous préférez un secret dédié.
+- **Réponse `2xx`** = appliqué → Physalis enregistre la valeur. Tout autre code
+  = échec → rien n'est committé (pas de dérive).
 
-> ⚠️ Changez `ROTATION_HMAC_KEY` depuis sa valeur par défaut en production.
+### Modes (joignabilité du hook)
 
-## Moteur cron
+- **Agent** — le hook est **interne** au réseau Docker du projet
+  (ex. `http://app:3000/internal/rotate`) : c'est l'**agent** qui l'appelle.
+  Cas courant d'une app cliente self-hostée non exposée.
+- **Directe** — le hook est **joignable depuis Physalis** (URL publique, plate-
+  forme d'automatisation) : Physalis l'appelle directement.
 
-Un cron **toutes les heures** sélectionne les secrets satisfaisant :
+### Où se configure le hook ?
 
-- `rotationEnabled = true`
-- `rotationNextAt ≤ NOW()`
-- projet non mis en pause (`rotationPaused = false`)
-- feature activée sur l'organisation (`rotationFeatureEnabled = true`)
-- client en statut `ACTIVE` ou `TRIAL`
+- **Secret** d'environnement en stratégie Webhook : l'URL/token/mode se règlent
+  **sur le secret**.
+- **Compte applicatif** : le hook se règle **sur le service backend lié** (voir
+  la section **Comptes applicatifs**). Ainsi, plusieurs comptes du même backend
+  partagent un seul hook.
 
-Chaque secret éligible passe par `triggerRotation()`. Les erreurs réseau
-(webhook N8n injoignable) sont silencieuses — la rotation sera retentée à
-la prochaine heure.
+### Exemple : Directus
 
-## Configurer la rotation sur un secret
+Directus n'a pas d'endpoint à ce format ; créez un **Flow** :
 
-> Permissions : **EDITOR** ou supérieur sur le projet.
+1. *Settings → Flows → Create Flow*. Déclencheur **Webhook (POST)**, **Response
+   Body = « Data of last operation »** → l'URL `…/flows/trigger/<id>` est votre
+   URL de hook.
+2. *(auth)* opération **Condition** : `{{$trigger.headers.authorization}}` égal
+   à `Bearer <votre-token>`.
+3. **Read Data** sur `directus_users`, filtre `email == {{$trigger.body.user}}`
+   → récupère l'`id`.
+4. **Update Data** sur `directus_users`, clé = cet `id`, payload
+   `{ "password": "{{$trigger.body.newValue}}" }` (Directus hashe en argon2).
 
-1. Ouvrez un secret → onglet **« Rotation »**.
-2. Activez la rotation et choisissez une **stratégie**.
-3. Saisissez l'**intervalle en jours** (1–3 650).
-4. Pour `DATABASE`, remplissez les informations de connexion.
-5. Enregistrez. `rotationNextAt` est calculé immédiatement : `NOW + intervalDays`.
+## Comptes applicatifs
 
-## Forcer une rotation immédiate
+Un **Compte** (onglet *Accès*) représente des identifiants de login pour l'app
+du projet. Vous pouvez le **lier** à un **environnement** (frontend) ou à un
+**service** (backend) : son URL en découle (source unique, synchronisée), ce qui
+permet à l'extension navigateur de le proposer sur la bonne page.
 
-Un **EDITOR** peut déclencher la rotation hors cycle cron via le bouton
-**« Rotation forcée »** (ou `POST /rotation/force`). L'action est auditée
-(`SECRET_ROTATION_FORCED`).
+Côté rotation, un compte est **Rappel** (assisté) par défaut, ou **Webhook** :
+dans ce cas il **doit être lié à un service backend dont le hook est configuré**
+(le hook vit sur le service). « Forcer » exécute alors le hook (mode Directe) ou
+le délègue à l'agent (mode Agent).
 
-## Mettre en pause un projet
+## Services
 
-Un **OWNER** du projet peut suspendre toutes les rotations du projet sans
-désactiver secret par secret :
+Un **Service** (onglet *Accès*) a deux usages :
+
+- **Service tiers** (Stripe, OVH…) : un identifiant + un mot de passe. Sa
+  rotation est un **rappel assisté** sur ses propres identifiants.
+- **Service backend** : souvent **juste une URL** (identifiant/mot de passe
+  **optionnels**), qui porte le **hook de rotation des comptes** liés. La section
+  « Hook de rotation des comptes » de l'éditeur de service définit l'URL, le
+  token et le mode (Agent / Directe).
+
+## Pas à pas : roter le mot de passe d'un compte via un hook
+
+Cas type : un compte **admin** d'une app cliente, dont le mot de passe est hashé
+en base par l'application.
+
+1. **Exposez un hook côté app** : un endpoint qui reçoit `{ user, newValue }`,
+   applique le nouveau mot de passe (le hashe + met à jour la ligne) et répond
+   `2xx`. (Avec Directus, un *Flow* — voir l'exemple ci-dessus.)
+2. **Créez/éditez le service backend** (onglet *Accès*) : renseignez son **URL**,
+   activez **« Hook de rotation des comptes »** et saisissez l'**URL du hook**, le
+   **token** et le **mode** (Agent si le hook est interne au réseau Docker,
+   Directe s'il est joignable depuis Physalis). Les identifiants du service sont
+   optionnels.
+3. **Liez le compte au service** : dans l'éditeur du compte, *Lié à → Service →*
+   votre backend.
+4. **Activez la rotation du compte** : bouton **Rotation** → activez, intervalle,
+   stratégie **Webhook**. Un indicateur confirme que le service lié a bien un hook.
+5. **Testez** : bouton **« Forcer la rotation »**. En mode Directe, Physalis
+   appelle le hook immédiatement ; si le hook répond `2xx`, la nouvelle valeur est
+   enregistrée et versionnée. En mode Agent, l'agent l'exécute à son prochain cycle.
+
+> Vérifiez d'abord le mécanisme en pointant le hook vers un endpoint de test qui
+> renvoie `200` (par ex. webhook.site) : vous confirmez le cycle
+> *générer → POST → enregistrer* sans risque de lockout, puis branchez le vrai hook.
+
+## Coffres d'équipe et d'organisation
+
+Les entrées de coffre se rotent en **rappel assisté** (générer/saisir + archivage
+des 3 dernières valeurs pour revert). Les entrées de coffre **projet** apparaissent
+aussi dans l'onglet Rotation de l'org ; les coffres **org** se gèrent depuis
+l'onglet Coffre.
+
+## Rotation immédiate & « Forcer »
+
+Depuis la modale d'un élément, ou depuis l'onglet **Rotation** de l'organisation :
+
+- **Rappel / assisté** → section *Rotation immédiate* : générez ou saisissez la
+  nouvelle valeur. Une **confirmation bloquante** rappelle que Physalis
+  enregistre la valeur **mais ne l'applique pas à la source** — changez-la
+  d'abord chez le fournisseur.
+- **Stratégie automatique** (Database, JWT, Clé API, Webhook) → bouton
+  **« Forcer »** : déclenche la rotation maintenant, hors planning.
+
+## Onglet « Rotation » de l'organisation
+
+Vue d'ensemble groupée par projet de toutes les rotations actives (secrets,
+clés email, services, comptes, coffres projet). Chaque ligne a un bouton
+**Rotation** (config + immédiate). Un **OWNER** de projet peut **mettre en
+pause** toutes ses rotations (utile pendant une maintenance) :
 
 ```http
 PATCH /api/projects/<slug>/rotation/pause
 { "paused": true }
 ```
 
-Pratique avant une maintenance ou un freeze de release.
+## Planification
+
+Les rotations automatiques s'exécutent à une **heure creuse** configurable
+(défaut **2 h UTC**) : le bref redéploiement de fin de rotation tombe ainsi hors
+des heures de pointe. Le bouton **« Forcer »** ignore cette fenêtre.
 
 ## États et suivi
 
-| Champ                | Valeurs possibles         | Description                                   |
-|----------------------|---------------------------|-----------------------------------------------|
-| `rotationLastStatus` | `success`, `error`, `null` | Résultat de la dernière rotation              |
-| `rotationErrorCount` | entier                    | Nombre d'échecs consécutifs (remis à 0 au succès) |
-| `rotationLastAt`     | datetime                  | Date de la dernière rotation réussie          |
-| `rotationNextAt`     | datetime                  | Prochaine exécution planifiée                 |
+| Champ | Description |
+|-------|-------------|
+| `rotationLastStatus` | `success`, `error` ou vide |
+| `rotationLastAt` | date de la dernière rotation |
+| `rotationNextAt` | prochaine échéance planifiée |
 
-Une notification e-mail est envoyée à l'**ADMIN/OWNER** au **premier échec**
-consécutif d'une rotation `DATABASE`. Les échecs suivants ne génèrent pas
-d'e-mail supplémentaire pour éviter le spam.
+Une notification e-mail part à l'**ADMIN / OWNER** au **premier échec** (pas de
+spam ensuite). Toute rotation est tracée dans l'audit log.
 
-## Historique des valeurs
+## Historique & revert
 
-Lors d'une rotation `JWT_SECRET`, l'ancienne valeur est automatiquement
-archivée dans le **versioning** du secret (50 versions max, puis purge
-FIFO). Voir [Secrets & catégories](secrets-categories) pour le
-fonctionnement du versioning.
+- **Secrets d'environnement** : l'ancienne valeur est archivée dans le
+  **versioning** complet du secret (voir *Secrets & catégories*).
+- **Services, comptes, entrées de coffre** (pas de versioning) : les **3
+  dernières valeurs** sont conservées pour pouvoir revenir en arrière.
+
+## Dépannage
+
+| Symptôme | Cause probable / solution |
+|----------|---------------------------|
+| **« Forcer » renvoie une erreur `Échec du hook : … »`** | Le hook a répondu non-2xx ou est injoignable. Le message inclut le code et le début de la réponse. Vérifiez l'URL, le token (`Bearer`), et que le hook répond bien `2xx`. |
+| **502 / la page ne répond pas en forçant** | Le hook ne répond pas dans les temps. En mode **Directe**, l'URL doit être joignable **depuis Physalis** (pas seulement depuis votre poste). Vérifiez que votre Flow renvoie une réponse (Response Body configuré). |
+| **« Lie le compte à un service backend avec un hook »** | Le compte est en Webhook mais son service lié n'a pas de hook configuré. Réglez le hook **sur le service** (onglet Accès). |
+| **Le compte n'apparaît pas dans l'extension** | L'extension propose un credential quand l'URL de la page correspond. Un compte apparaît sur l'URL de sa **cible liée** (environnement ou service) — pas sur une URL sans lien. |
+| **Le bouton « Rotation » n'apparaît pas sur un secret** | Le nom n'est pas reconnu comme un credential (`PORT`, URL, flag…). C'est volontaire. |
+| **Aucune rotation automatique ne se déclenche** | Le cron tourne en heure creuse (défaut 2 h UTC). Utilisez **« Forcer »** pour tester à la demande. Vérifiez aussi que la feature est activée sur l'org et le projet non en pause. |
+
+## Sécurité
+
+- **Self-rotation sans credential admin** (Database/Agent) : l'agent change le
+  mot de passe **du compte qu'il utilise**, jamais un superuser.
+- **Le hashing reste dans l'application** (Webhook) : Physalis ne reproduit
+  jamais le schéma de hash d'une app.
+- **Atomicité** : la nouvelle valeur n'est écrite qu'**après** confirmation du
+  changement à la source → pas de dérive entre la source et le vault.
+- **Le cron ne déchiffre jamais** de credential : il marque « dû » et délègue à
+  l'exécuteur (agent, hook, ou rappel).

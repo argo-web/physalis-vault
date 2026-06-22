@@ -117,16 +117,20 @@ L'**extension navigateur** ([→ Extension navigateur](extension-navigateur))
 va plus loin : elle auto-fill les champs `autocomplete="one-time-code"`
 sur les sites web sans copier-coller manuel.
 
-## Déplacer une entrée perso → équipe
+## Déplacer une entrée perso → équipe ou compte de projet
 
-Si vous avez créé une entrée personnelle qui mériterait d'être partagée :
+Si vous avez créé une entrée personnelle qui mériterait d'être partagée ou
+rattachée à un projet :
 
-1. Sur l'entrée perso → bouton **« Déplacer vers une équipe »**.
-2. Choisir une collection d'équipe (org ou projet) à laquelle vous
-   appartenez.
-3. Validez. L'entrée est **re-chiffrée et déplacée atomiquement** —
-   elle disparaît de votre coffre perso et apparaît dans la collection
-   choisie pour tous ses membres.
+1. Sur l'entrée perso → bouton **« Déplacer »**.
+2. Choisir la destination :
+   - une **collection d'équipe** (org ou projet) à laquelle vous appartenez ;
+   - ou un **Compte de projet** (onglet *Accès*) — l'entrée devient un compte
+     applicatif. ⚠️ L'identifiant et le mot de passe sont conservés, mais
+     l'**URL et le 2FA (TOTP) ne sont pas repris** (les comptes n'ont pas ces
+     champs) ; un avertissement le rappelle.
+3. Validez. L'entrée est **re-chiffrée et déplacée atomiquement** — elle
+   disparaît de votre coffre perso et apparaît dans la destination choisie.
 
 ## Lecture par l'extension navigateur
 

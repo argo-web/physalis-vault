@@ -102,13 +102,23 @@ Esta pestaña agrupa las **referencias no secretas** relacionadas con el proyect
 
 - **Tarjetas de entorno** — resumen visual por entorno (URL, servidor, último
   despliegue visto en el registro de auditoría)
-- **Servicios** — entradas `{usuario, contraseña}` cifradas para servicios de terceros
-  (Sentry, Stripe, BD externa…) que no pertenecen al `.env`
+- **Servicios** — entradas para servicios vinculados al proyecto. Dos usos:
+  - *servicio de terceros* (Sentry, Stripe…): **usuario + contraseña** cifrados;
+  - *servicio backend*: a menudo **solo una URL** (usuario/contraseña
+    **opcionales**), que puede portar el **hook de rotación de las cuentas**
+    vinculadas.
 - **Cuentas de aplicación** (`AppAccount`) — credenciales cifradas para
-  usuarios de la aplicación (admin de Strapi, super-usuario de PostgreSQL…)
+  usuarios de la aplicación (admin de Strapi, super-usuario de PostgreSQL…). Una
+  cuenta puede **vincularse a un entorno** (frontend) o a un **servicio**
+  (backend): su URL se deriva del vínculo (la extensión la propone entonces en la
+  página correcta).
 
 Aquí es donde se documenta "cómo conectarse a este proyecto manualmente",
 sin contaminar los secretos inyectados en tiempo de ejecución.
+
+> Servicios y cuentas también pueden **rotarse** (recordatorio asistido, o
+> **webhook** para las cuentas vía el hook del servicio backend vinculado) — ver
+> [Rotación de secretos](rotaciones).
 
 ## Permisos por proyecto (`ProjectMember`)
 

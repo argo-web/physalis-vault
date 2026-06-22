@@ -116,15 +116,20 @@ La **extensión de navegador** ([→ Extensión de navegador](browser-extension)
 va más lejos: completa automáticamente los campos `autocomplete="one-time-code"` en
 sitios web sin necesidad de copiar y pegar manualmente.
 
-## Mover una entrada personal → equipo
+## Mover una entrada personal → equipo o cuenta de proyecto
 
-Si has creado una entrada personal que debería compartirse:
+Si has creado una entrada personal que debería compartirse o vincularse a un
+proyecto:
 
-1. En la entrada personal → haz clic en **"Mover a un equipo"**.
-2. Elige una colección de equipo (org o proyecto) a la que pertenezcas.
-3. Envía. La entrada queda **re-cifrada y movida de forma atómica** —
-   desaparece de tu bóveda personal y aparece en la colección elegida
-   para todos sus miembros.
+1. En la entrada personal → haz clic en **"Mover"**.
+2. Elige el destino:
+   - una **colección de equipo** (org o proyecto) a la que pertenezcas;
+   - o una **Cuenta de proyecto** (pestaña *Acceso*) — la entrada se convierte en
+     una cuenta de aplicación. ⚠️ El usuario y la contraseña se conservan, pero la
+     **URL y el 2FA (TOTP) no se trasladan** (las cuentas no tienen esos campos);
+     un aviso te lo recuerda.
+3. Envía. La entrada queda **re-cifrada y movida de forma atómica** — desaparece
+   de tu bóveda personal y aparece en el destino elegido.
 
 ## Leer entradas desde la extensión de navegador
 

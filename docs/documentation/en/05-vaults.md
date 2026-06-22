@@ -116,15 +116,20 @@ The **browser extension** ([→ Browser extension](browser-extension))
 goes further: it auto-fills `autocomplete="one-time-code"` fields on
 websites without any manual copy-pasting.
 
-## Move a personal entry → team
+## Move a personal entry → team or project account
 
-If you have created a personal entry that should be shared:
+If you have created a personal entry that should be shared or attached to a
+project:
 
-1. On the personal entry → click **"Move to a team"**.
-2. Choose a team collection (org or project) that you belong to.
-3. Submit. The entry is **atomically re-encrypted and moved** —
-   it disappears from your personal vault and appears in the chosen
-   collection for all its members.
+1. On the personal entry → click **"Move"**.
+2. Choose the destination:
+   - a **team collection** (org or project) that you belong to;
+   - or a **project Account** (*Access* tab) — the entry becomes an application
+     account. ⚠️ The username and password are kept, but the **URL and 2FA
+     (TOTP) are not carried over** (accounts have no such fields); a warning
+     reminds you.
+3. Submit. The entry is **atomically re-encrypted and moved** — it disappears
+   from your personal vault and appears in the chosen destination.
 
 ## Reading entries from the browser extension
 

@@ -102,13 +102,21 @@ This tab groups **non-secret references** related to the project:
 
 - **Environment cards** — visual summary per environment (URL, server, last
   deployment seen in the audit log)
-- **Services** — encrypted `{user, password}` entries for third-party
-  services (Sentry, Stripe, external DB…) that do not belong in `.env`
+- **Services** — entries for services tied to the project. Two uses:
+  - *third-party service* (Sentry, Stripe…): encrypted **username + password**;
+  - *backend service*: often **just a URL** (username/password **optional**),
+    which can carry the **account rotation hook** for its linked accounts.
 - **Application accounts** (`AppAccount`) — encrypted credentials for
-  application users (Strapi admin, PostgreSQL super-user…)
+  application users (Strapi admin, PostgreSQL super-user…). An account can be
+  **linked to an environment** (frontend) or a **service** (backend): its URL
+  follows from the link (the extension then offers it on the right page).
 
 This is where you document "how to connect to this project manually",
 without polluting the runtime-injected secrets.
+
+> Services and accounts can also be **rotated** (assisted reminder, or
+> **webhook** for accounts via the linked backend service's hook) — see
+> [Secret rotation](rotations).
 
 ## Per-project permissions (`ProjectMember`)
 
