@@ -25,7 +25,7 @@ La rotation s'applique à plusieurs **endroits où vivent des secrets** :
 |-------|-----|----------------------|
 | **Secret d'environnement** | onglet *Secrets* d'un projet | Database, JWT, Clé API, Webhook, Rappel |
 | **Service** (Stripe, OVH…) | onglet *Accès* | Rappel assisté (sur ses propres identifiants) |
-| **Compte applicatif** | onglet *Accès* | Rappel assisté ou **Webhook** (hook du backend lié) |
+| **Compte applicatif** | onglet *Accès* | Rappel assisté, **Webhook** (hook du backend lié) ou **Base de données** (rôle/utilisateur d'une base managée type Supabase) |
 | **Entrée de coffre** d'équipe / d'org | onglet *Coffre* | Rappel assisté |
 
 ## Quelle stratégie pour quel cas ?
@@ -36,6 +36,7 @@ La rotation s'applique à plusieurs **endroits où vivent des secrets** :
 | un **JWT / session / clé de chiffrement** interne | **JWT Secret** | automatique, généré par Physalis |
 | une **clé de l'API Gateway** Physalis | **Clé API** | automatique |
 | un **mot de passe de compte** (admin/utilisateur) hashé par l'app | **Webhook** | l'app applique via un hook |
+| un **compte d'une base managée** (rôle Postgres ou utilisateur Supabase Auth) | **Base de données** | Physalis se connecte (admin du service lié) et applique |
 | une **clé tierce / token** (Stripe, Mailgun…) qu'aucun hook ne couvre | **Rappel** | vous changez à la source, puis enregistrez |
 
 ## Prérequis
@@ -76,8 +77,10 @@ credential admin** n'est stocké ni utilisé. Deux modes d'exécution :
   du projet : le sidecar **agent** (le même que pour les backups) effectue la
   rotation **en local**, puis reporte la nouvelle valeur à Physalis. **Aucun
   appel externe** n'est nécessaire.
-- **Directe** — pour une **base managée joignable** (Supabase, RDS, Neon…),
-  changée directement par Physalis. *(Ce mode est en cours de finalisation.)*
+- **Directe** — pour une **base managée joignable en TCP+SSL** (Supabase, RDS,
+  Neon…) : Physalis s'y connecte **directement** (avec le mot de passe courant du
+  vault), exécute l'`ALTER`, vérifie la reconnexion, puis committe. **Aucune
+  dépendance externe** (pas de N8n). PostgreSQL pour l'instant.
 
 | Champ | Description |
 |-------|-------------|
@@ -192,21 +195,38 @@ du projet. Vous pouvez le **lier** à un **environnement** (frontend) ou à un
 **service** (backend) : son URL en découle (source unique, synchronisée), ce qui
 permet à l'extension navigateur de le proposer sur la bonne page.
 
-Côté rotation, un compte est **Rappel** (assisté) par défaut, ou **Webhook** :
-dans ce cas il **doit être lié à un service backend dont le hook est configuré**
-(le hook vit sur le service). « Forcer » exécute alors le hook (mode Directe) ou
-le délègue à l'agent (mode Agent).
+Côté rotation, un compte a trois stratégies possibles :
+
+- **Rappel** (assisté) — par défaut.
+- **Webhook** — il **doit être lié à un service backend dont le hook est
+  configuré** (le hook vit sur le service). « Forcer » exécute le hook (mode
+  Directe) ou le délègue à l'agent (mode Agent).
+- **Base de données** — pour un compte d'une **base managée** (Supabase…) : il
+  doit être lié à un **service « base de données »** (voir ci-dessous). Physalis
+  se connecte avec l'**admin DB du service** et applique le nouveau mot de passe.
+  Deux **types de cible** :
+  - **Rôle de base** (PostgreSQL) → `ALTER ROLE` ; l'identifiant du compte = le
+    nom du rôle.
+  - **Utilisateur Supabase Auth** (`auth.users`) → `UPDATE auth.users` (hash
+    bcrypt) ; l'identifiant du compte = l'**email**.
 
 ## Services
 
-Un **Service** (onglet *Accès*) a deux usages :
+Un **Service** (onglet *Accès*) a trois usages :
 
 - **Service tiers** (Stripe, OVH…) : un identifiant + un mot de passe. Sa
   rotation est un **rappel assisté** sur ses propres identifiants.
 - **Service backend** : souvent **juste une URL** (identifiant/mot de passe
   **optionnels**), qui porte le **hook de rotation des comptes** liés. La section
-  « Hook de rotation des comptes » de l'éditeur de service définit l'URL, le
-  token et le mode (Agent / Directe).
+  « Hook de rotation des comptes » de l'éditeur définit l'URL, le token et le
+  mode (Agent / Directe).
+- **Service base de données managée** (Supabase, RDS…) : coche **« Cible base de
+  données »** et renseigne `type / hôte / port / base` **+ un identifiant et un
+  mot de passe de connexion DB dédiés** (l'admin, ex. `postgres` ou
+  `postgres.<ref>` via le pooler Supabase). ⚠️ Ces identifiants DB sont
+  **distincts** des identifiants « du haut » (qui, eux, documentent le **login du
+  dashboard**). Les comptes liés en stratégie **Base de données** rotent via cette
+  connexion admin.
 
 ## Pas à pas : roter le mot de passe d'un compte via un hook
 
