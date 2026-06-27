@@ -11,11 +11,10 @@ L'extension Physalis (Chrome / Firefox) connecte vos coffres au web :
 auto-fill des credentials sur les sites visités, auto-save quand vous
 créez un compte, génération automatique des codes TOTP des sites tiers.
 
-> 🚧 **Statut** : le **backend** est livré et stable. Le **front-end**
-> de l'extension (Chrome / Firefox) est en cours de finalisation —
-> certaines fonctions décrites ci-dessous sont déjà disponibles, d'autres
-> arrivent. Référez-vous au prompt d'installation affiché dans le
-> dashboard pour la version actuellement disponible.
+> ✅ **Statut** : l'extension est **publiée sur les stores** — Chrome Web
+> Store et Firefox Add-ons (v0.7.0). Backend et front-end livrés et
+> stables. Installez-la depuis le prompt affiché dans votre dashboard ou
+> directement depuis le store de votre navigateur.
 
 ## Pré-requis
 
@@ -50,6 +49,13 @@ re-demande email + password + TOTP. Choisissez 1h sur un poste partagé,
 > 🔒 Les sessions extension sont **séparées** de votre session web. Les
 > tokens sont hashés en SHA-256 côté serveur — Physalis ne stocke jamais
 > le token en clair, même brièvement.
+
+> 🔗 **Comptes SSO / login social** : si vous vous connectez via SSO
+> d'entreprise ou un compte social (sans mot de passe Physalis), le popup
+> email + mot de passe ne s'applique pas. Connectez-vous simplement sur le
+> web (`<votre-slug>.physalis.cloud`) : si l'extension est installée, elle
+> **récupère automatiquement votre session** — aucun code à saisir dans le
+> popup.
 
 ### Gérer ses sessions extension
 

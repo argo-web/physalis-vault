@@ -11,11 +11,10 @@ La extensión de Physalis (Chrome / Firefox) conecta tus bóvedas con la web:
 autocompletado de credenciales en los sitios visitados, guardado automático al crear una cuenta,
 y generación automática de códigos TOTP para sitios de terceros.
 
-> 🚧 **Estado**: el **backend** está desplegado y es estable. El **front-end** de la extensión
-> (Chrome / Firefox) está en proceso de finalización —
-> algunas funcionalidades descritas a continuación ya están disponibles, otras están en camino.
-> Consulta el aviso de instalación que aparece en el panel de control para ver la versión
-> actualmente disponible.
+> ✅ **Estado**: la extensión está **publicada en las stores** — Chrome Web
+> Store y Firefox Add-ons (v0.7.0). Backend y front-end desplegados y
+> estables. Instálala desde el aviso que aparece en tu panel de control o
+> directamente desde la store de tu navegador.
 
 ## Requisitos previos
 
@@ -48,6 +47,12 @@ tu portátil personal.
 > 🔒 Las sesiones de la extensión son **independientes** de tu sesión web. Los tokens
 > se hashean con SHA-256 en el servidor — Physalis nunca almacena el token en
 > texto plano, ni siquiera brevemente.
+
+> 🔗 **Cuentas SSO / inicio de sesión social**: si te conectas mediante SSO
+> de empresa o una cuenta social (sin contraseña de Physalis), el popup de
+> email + contraseña no aplica. Simplemente inicia sesión en la web
+> (`<tu-slug>.physalis.cloud`): si la extensión está instalada, **recupera
+> automáticamente tu sesión** — sin ningún código que escribir en el popup.
 
 ### Gestionar sesiones de la extensión
 

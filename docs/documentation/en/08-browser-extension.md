@@ -11,11 +11,10 @@ The Physalis extension (Chrome / Firefox) connects your vaults to the web:
 auto-fill credentials on visited sites, auto-save when you create an account,
 and automatic TOTP code generation for third-party sites.
 
-> 🚧 **Status**: the **backend** is shipped and stable. The extension's
-> **front-end** (Chrome / Firefox) is being finalised —
-> some features described below are already available, others are on their way.
-> Refer to the installation prompt shown in the dashboard for the version
-> currently available.
+> ✅ **Status**: the extension is **published on the stores** — Chrome Web
+> Store and Firefox Add-ons (v0.7.0). Backend and front-end are shipped and
+> stable. Install it from the prompt shown in your dashboard or directly
+> from your browser's store.
 
 ## Prerequisites
 
@@ -49,6 +48,12 @@ your personal laptop.
 > 🔒 Extension sessions are **separate** from your web session. Tokens
 > are SHA-256 hashed server-side — Physalis never stores the token in
 > plaintext, not even briefly.
+
+> 🔗 **SSO / social login accounts**: if you sign in via enterprise SSO or
+> a social account (with no Physalis password), the email + password popup
+> doesn't apply. Just sign in on the web (`<your-slug>.physalis.cloud`): if
+> the extension is installed, it **automatically picks up your session** —
+> no code to enter in the popup.
 
 ### Managing extension sessions
 
